@@ -1,0 +1,68 @@
+# Dependencies
+**/node_modules/
+
+# Build outputs
+**/dist/
+**/out/
+**/build/
+**/.vite/
+**/.cache/
+**/.eslintcache
+**/.wwebjs_auth/
+**/.wwebjs_cache/
+**/runtime/
+
+# Environment and secrets
+**/.env
+**/.env.*
+!**/.env.example
+
+# Logs
+**/*.log
+**/*.log.*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+**/.vscode/
+**/.idea/
+
+# VCS / temp
+**/.git/
+**/tmp/
+**/temp/
+**/coverage/
+
+# Large generated / packaged artifacts
+**/*.generated.py
+**/*.zip
+**/*.7z
+**/*.rar
+**/*.exe
+**/*.msi
+**/*.dll
+**/*.bin
+**/*.map
+
+# Media and binary assets not needed for code graphs
+**/*.png
+**/*.jpg
+**/*.jpeg
+**/*.gif
+**/*.webp
+**/*.ico
+**/*.mp3
+**/*.wav
+**/*.ogg
+**/*.mp4
+**/*.mov
+**/*.avi
+**/*.mkv
+**/*.webm
+**/*.pdf
+
+# Keep source and project metadata readable by default

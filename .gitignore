@@ -1,0 +1,13 @@
+graphify-out/
+runtime/
+
+# Root-level logs and temp files
+*.log
+*.tmp
+*.temp
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

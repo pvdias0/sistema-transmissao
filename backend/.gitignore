@@ -1,0 +1,30 @@
+node_modules/
+
+# Environment and local secrets
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+*.log.*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Runtime and temporary files
+tmp/
+temp/
+.cache/
+coverage/
+.eslintcache
+.wwebjs_auth/
+.wwebjs_cache/
+runtime/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
