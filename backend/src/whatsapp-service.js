@@ -79,6 +79,19 @@ function formatDisplayIdentity(value) {
   return normalizedValue;
 }
 
+async function resolveProfilePhotoUrl(contact) {
+  if (!contact || typeof contact.getProfilePicUrl !== 'function') {
+    return null;
+  }
+
+  try {
+    const url = await contact.getProfilePicUrl();
+    return typeof url === 'string' && url.trim() ? url : null;
+  } catch {
+    return null;
+  }
+}
+
 async function resolveMessageDisplayIdentity(message) {
   const fallbackAuthor =
     firstDefinedValue(message.notifyName, message._data?.notifyName, message._data?.from) ||
@@ -104,6 +117,8 @@ async function resolveMessageDisplayIdentity(message) {
         message._data?.notifyName
       ) || fallbackAuthor;
 
+    const authorAvatarUrl = await resolveProfilePhotoUrl(contact);
+
     if (isGroup) {
       const groupName =
         firstDefinedValue(chat?.name, chat?.formattedTitle, normalizeWhatsAppId(chatId)) ||
@@ -112,18 +127,21 @@ async function resolveMessageDisplayIdentity(message) {
 
       return {
         author,
-        phone: `${participantDisplay} | ${groupName}`
+        phone: `${participantDisplay} | ${groupName}`,
+        authorAvatarUrl
       };
     }
 
     return {
       author,
-      phone: formatDisplayIdentity(message.from)
+      phone: formatDisplayIdentity(message.from),
+      authorAvatarUrl
     };
   } catch {
     return {
       author: fallbackAuthor,
-      phone: fallbackPhone
+      phone: fallbackPhone,
+      authorAvatarUrl: null
     };
   }
 }
@@ -390,7 +408,7 @@ export function createWhatsAppService({ store, mediaStorage }) {
         return;
       }
 
-      const { author, phone } = await resolveMessageDisplayIdentity(message);
+      const { author, phone, authorAvatarUrl } = await resolveMessageDisplayIdentity(message);
       const body = message.body?.trim() || '';
 
       if (message.type === 'chat') {
@@ -401,6 +419,7 @@ export function createWhatsAppService({ store, mediaStorage }) {
         store.enqueueTextMessage({
           author,
           phone,
+          authorAvatarUrl,
           content: body,
           source: 'whatsapp'
         });
@@ -423,6 +442,7 @@ export function createWhatsAppService({ store, mediaStorage }) {
           store.enqueueImageMessage({
             author,
             phone,
+            authorAvatarUrl,
             content: body,
             source: 'whatsapp',
             media
@@ -454,6 +474,7 @@ export function createWhatsAppService({ store, mediaStorage }) {
           store.enqueueAudioMessage({
             author,
             phone,
+            authorAvatarUrl,
             content: body,
             source: 'whatsapp',
             media
@@ -485,6 +506,7 @@ export function createWhatsAppService({ store, mediaStorage }) {
           store.enqueueVideoMessage({
             author,
             phone,
+            authorAvatarUrl,
             content: body,
             source: 'whatsapp',
             media

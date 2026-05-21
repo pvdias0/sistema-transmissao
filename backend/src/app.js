@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import express from 'express';
+import os from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { backendConfig, getBackendBaseUrl } from './config.js';
@@ -12,6 +13,30 @@ import { createWhatsAppService } from './whatsapp-service.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const overlayDirectory = join(__dirname, 'overlay');
+
+function getNetworkAddress() {
+  const interfaces = os.networkInterfaces();
+
+  for (const entries of Object.values(interfaces)) {
+    for (const entry of entries || []) {
+      if (entry.family === 'IPv4' && !entry.internal) {
+        return entry.address;
+      }
+    }
+  }
+
+  return null;
+}
+
+function getNetworkBaseUrl() {
+  const address = getNetworkAddress();
+
+  if (!address) {
+    return null;
+  }
+
+  return `http://${address}:${backendConfig.port}`;
+}
 
 function getWhatsAppHealthStatus(connection) {
   if (connection === 'ready' || connection === 'authenticated') {
@@ -79,6 +104,7 @@ export async function createApp({ startedAt }) {
     const snapshot = store.getSnapshot();
     const whatsappSnapshot = whatsapp.getSnapshot();
     const runtimeStatusMeta = runtimeStateStorage.getStatusMeta();
+    const networkBaseUrl = getNetworkBaseUrl();
 
     response.json({
       app: {
@@ -90,7 +116,13 @@ export async function createApp({ startedAt }) {
         host: backendConfig.host,
         port: backendConfig.port,
         baseUrl: getBackendBaseUrl(),
-        overlayUrl: `${getBackendBaseUrl()}/overlay`
+        overlayUrl: `${getBackendBaseUrl()}/overlay`,
+        overlayMessageUrl: `${getBackendBaseUrl()}/overlay/message`,
+        overlayPollUrl: `${getBackendBaseUrl()}/overlay/poll`,
+        networkBaseUrl,
+        overlayNetworkUrl: networkBaseUrl ? `${networkBaseUrl}/overlay` : null,
+        overlayNetworkMessageUrl: networkBaseUrl ? `${networkBaseUrl}/overlay/message` : null,
+        overlayNetworkPollUrl: networkBaseUrl ? `${networkBaseUrl}/overlay/poll` : null
       },
       features: {
         moderation: 'in_progress',
@@ -104,6 +136,7 @@ export async function createApp({ startedAt }) {
       runtime: {
         queueSize: snapshot.moderationQueue.length,
         liveItem: snapshot.liveItem,
+        mediaTransport: snapshot.mediaTransport,
         restoredFromDisk: runtimeStatusMeta.restoredFromDisk,
         persistedAt: runtimeStatusMeta.persistedAt,
         stateFilePath: getRuntimeStateFilePath()
@@ -144,6 +177,7 @@ export async function createApp({ startedAt }) {
     response.setHeader('Cache-Control', 'no-store');
     response.json({
       liveItem: snapshot.liveItem,
+      mediaTransport: snapshot.mediaTransport,
       activePoll: snapshot.activePoll,
       settings: overlaySettingsStorage.getSnapshot(),
       updatedAt: new Date().toISOString()
@@ -160,6 +194,14 @@ export async function createApp({ startedAt }) {
   });
 
   app.get('/overlay', (_request, response) => {
+    response.sendFile(join(overlayDirectory, 'index.html'));
+  });
+
+  app.get('/overlay/message', (_request, response) => {
+    response.sendFile(join(overlayDirectory, 'index.html'));
+  });
+
+  app.get('/overlay/poll', (_request, response) => {
     response.sendFile(join(overlayDirectory, 'index.html'));
   });
 
@@ -210,6 +252,65 @@ export async function createApp({ startedAt }) {
     response.json(store.clearLiveItem());
   });
 
+  app.post('/api/media/transport/command', (request, response) => {
+    const action = String(request.body?.action || '').trim();
+    const deltaSeconds = Number(request.body?.deltaSeconds);
+    const targetTime = Number(request.body?.targetTime);
+
+    if (!action) {
+      return response.status(400).json({ error: 'Acao de transporte e obrigatoria.' });
+    }
+
+    if (!['play', 'pause', 'stop', 'restart', 'seek_relative', 'seek_to'].includes(action)) {
+      return response.status(400).json({ error: 'Acao de transporte invalida.' });
+    }
+
+    if (action === 'seek_relative' && !Number.isFinite(deltaSeconds)) {
+      return response.status(400).json({ error: 'deltaSeconds e obrigatorio para seek_relative.' });
+    }
+
+    if (action === 'seek_to' && !Number.isFinite(targetTime)) {
+      return response.status(400).json({ error: 'targetTime e obrigatorio para seek_to.' });
+    }
+
+    const mediaTransport = store.issueMediaCommand(action, {
+      deltaSeconds,
+      targetTime
+    });
+
+    if (!mediaTransport) {
+      return response.status(409).json({
+        error: 'Nao existe audio ou video no ar para controlar.'
+      });
+    }
+
+    return response.json(mediaTransport);
+  });
+
+  app.post('/api/media/transport/telemetry', (request, response) => {
+    const itemId = String(request.body?.itemId || '').trim();
+
+    if (!itemId) {
+      return response.status(400).json({ error: 'itemId e obrigatorio.' });
+    }
+
+    const mediaTransport = store.updateMediaTelemetry({
+      itemId,
+      status: request.body?.status,
+      currentTime: Number(request.body?.currentTime),
+      duration: Number(request.body?.duration),
+      error: request.body?.error
+    });
+
+    if (!mediaTransport) {
+      return response.status(409).json({
+        error: 'Telemetria recebida para item sem controle de transporte ativo.'
+      });
+    }
+
+    return response.json(mediaTransport);
+  });
+
   app.get('/api/polls/active', (_request, response) => {
     response.json({
       activePoll: store.getSnapshot().activePoll
@@ -230,8 +331,8 @@ export async function createApp({ startedAt }) {
       return response.status(400).json({ error: 'Informe pelo menos duas opcoes.' });
     }
 
-    if (options.length > 26) {
-      return response.status(400).json({ error: 'Limite de 26 opcoes por enquete.' });
+    if (options.length > 5) {
+      return response.status(400).json({ error: 'Limite de 5 opcoes por enquete.' });
     }
 
     const poll = store.createPoll({ title, options });

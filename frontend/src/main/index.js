@@ -1,5 +1,6 @@
 import { app, shell, BrowserWindow, ipcMain } from 'electron'
-import { spawn } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
+import { promisify } from 'node:util'
 import { existsSync } from 'node:fs'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
@@ -15,6 +16,8 @@ let isBackendStarting = false
 let isAppQuitting = false
 const BACKEND_STARTUP_TIMEOUT_MS = 8000
 const BACKEND_STARTUP_POLL_MS = 350
+const execFileAsync = promisify(execFile)
+let backendHostOverride = null
 
 async function isBackendReachable() {
   try {
@@ -90,10 +93,17 @@ async function ensureBackendRunning() {
 
   isBackendStarting = true
 
+  const env = { ...process.env }
+
+  if (backendHostOverride) {
+    env.HOST = backendHostOverride
+  }
+
   const childProcess = spawn('node', ['src/server.js'], {
     cwd: backendRoot,
     stdio: ['ignore', 'pipe', 'pipe'],
-    windowsHide: true
+    windowsHide: true,
+    env
   })
 
   backendChildProcess = childProcess
@@ -175,6 +185,72 @@ async function requestBackendWithOptions(pathname, options = {}) {
   return payload
 }
 
+function encodePowerShellCommand(command) {
+  return Buffer.from(command, 'utf16le').toString('base64')
+}
+
+async function runElevatedPowerShell(command) {
+  const encoded = encodePowerShellCommand(command)
+  const psCommand = `Start-Process -FilePath "powershell" -Verb RunAs -ArgumentList "-NoProfile -WindowStyle Hidden -EncodedCommand ${encoded}" -Wait -PassThru | ForEach-Object { $_.ExitCode }`
+  const { stdout } = await execFileAsync('powershell', ['-NoProfile', '-Command', psCommand], {
+    windowsHide: true
+  })
+  const exitCode = Number.parseInt(String(stdout || '').trim(), 10)
+  return Number.isInteger(exitCode) ? exitCode : 0
+}
+
+async function restartBackendWithHost(host) {
+  if (process.env.BACKEND_BASE_URL) {
+    return false
+  }
+
+  backendHostOverride = host
+  await stopManagedBackend()
+  await new Promise((resolve) => setTimeout(resolve, 800))
+  await ensureBackendRunning()
+  return true
+}
+
+async function enableNetworkAccessRule(port) {
+  if (process.platform !== 'win32') {
+    return { ok: false, error: 'Disponivel apenas no Windows.' }
+  }
+
+  if (!Number.isInteger(port) || port <= 0) {
+    return { ok: false, error: 'Porta do backend invalida.' }
+  }
+
+  const ruleName = `Sistema Transmissao (porta ${port})`
+  const firewallCommand =
+    `netsh advfirewall firewall delete rule name="${ruleName}" | Out-Null; ` +
+    `netsh advfirewall firewall add rule name="${ruleName}" dir=in action=allow protocol=TCP localport=${port} profile=private`
+
+  try {
+    const exitCode = await runElevatedPowerShell(firewallCommand)
+
+    if (exitCode !== 0) {
+      return { ok: false, error: 'Falha ao criar regra no firewall.' }
+    }
+
+    const restarted = await restartBackendWithHost('0.0.0.0')
+    return {
+      ok: true,
+      data: {
+        restarted
+      }
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : ''
+    const isCanceled = message.toLowerCase().includes('canceled') || message.includes('cancel')
+    return {
+      ok: false,
+      error: isCanceled
+        ? 'Permissao de administrador negada.'
+        : 'Falha ao solicitar permissao do firewall.'
+    }
+  }
+}
+
 function createWindow() {
   const mainWindow = new BrowserWindow({
     width: 1280,
@@ -213,12 +289,14 @@ function registerIpcHandlers() {
   ipcMain.removeHandler('backend:get-status')
   ipcMain.removeHandler('backend:get-moderation-state')
   ipcMain.removeHandler('backend:cleanup')
+  ipcMain.removeHandler('system:enable-network-access')
   ipcMain.removeHandler('overlay:update-settings')
   ipcMain.removeHandler('backend:create-test-message')
   ipcMain.removeHandler('backend:approve-item')
   ipcMain.removeHandler('backend:reject-item')
   ipcMain.removeHandler('backend:set-live-item')
   ipcMain.removeHandler('backend:clear-live-item')
+  ipcMain.removeHandler('media:send-command')
   ipcMain.removeHandler('whatsapp:get-status')
   ipcMain.removeHandler('whatsapp:connect')
   ipcMain.removeHandler('whatsapp:reset-runtime')
@@ -236,6 +314,10 @@ function registerIpcHandlers() {
     platform: process.platform,
     isDev: is.dev
   }))
+
+  ipcMain.handle('system:enable-network-access', async (_event, payload) => {
+    return enableNetworkAccessRule(Number(payload?.port))
+  })
 
   ipcMain.handle('backend:get-health', async () => {
     try {
@@ -390,6 +472,23 @@ function registerIpcHandlers() {
       return {
         ok: false,
         error: error instanceof Error ? error.message : 'Falha ao limpar item no ar'
+      }
+    }
+  })
+
+  ipcMain.handle('media:send-command', async (_event, payload) => {
+    try {
+      return {
+        ok: true,
+        data: await requestBackendWithOptions('/api/media/transport/command', {
+          method: 'POST',
+          body: payload
+        })
+      }
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : 'Falha ao controlar audio ou video'
       }
     }
   })

@@ -10,9 +10,17 @@ const INITIAL_FORM = {
 
 const INITIAL_POLL_FORM = {
   title: '',
-  optionA: '',
-  optionB: ''
+  options: ['', '']
 }
+
+const OVERLAY_FONT_OPTIONS = [
+  'Segoe UI',
+  'Arial',
+  'Verdana',
+  'Tahoma',
+  'Trebuchet MS',
+  'Georgia'
+]
 
 function formatBooleanLabel(value) {
   return value ? 'Ativo' : 'Inativo'
@@ -34,6 +42,18 @@ function formatTimestamp(value) {
   return new Date(value).toLocaleString('pt-BR')
 }
 
+function formatDurationLabel(valueInSeconds) {
+  if (!Number.isFinite(valueInSeconds) || valueInSeconds < 0) {
+    return '--:--'
+  }
+
+  const totalSeconds = Math.floor(valueInSeconds)
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+}
+
 function resolveMediaUrl(baseUrl, publicPath) {
   if (!baseUrl || !publicPath) {
     return ''
@@ -48,6 +68,40 @@ function getStatusLabel(status) {
   if (status === 'rejected') return 'Rejeitado'
   if (status === 'on_air') return 'No ar'
   return status
+}
+
+function getItemTypeLabel(type) {
+  if (type === 'text') return 'Texto'
+  if (type === 'image') return 'Imagem'
+  if (type === 'audio') return 'Audio'
+  if (type === 'video') return 'Video'
+  return 'Item'
+}
+
+function getTransportStatusLabel(status) {
+  if (status === 'cued') return 'Pronto'
+  if (status === 'playing') return 'Tocando'
+  if (status === 'paused') return 'Pausado'
+  if (status === 'stopped') return 'Parado'
+  if (status === 'ended') return 'Finalizado'
+  if (status === 'error') return 'Erro'
+  return status || 'Indisponivel'
+}
+
+function getPreviewGuidance(status) {
+  if (status === 'approved') {
+    return 'Este item ja foi aprovado. Se fizer sentido, coloque no ar quando quiser.'
+  }
+
+  if (status === 'on_air') {
+    return 'Este item ja esta no ar agora.'
+  }
+
+  if (status === 'rejected') {
+    return 'Este item foi rejeitado e nao volta para a transmissao.'
+  }
+
+  return 'Revise com calma e escolha a acao logo abaixo.'
 }
 
 function getWhatsAppConnectionLabel(status) {
@@ -86,11 +140,18 @@ function App() {
   const [cleanupError, setCleanupError] = useState('')
   const [cleanupSuccess, setCleanupSuccess] = useState('')
   const [overlaySettingsError, setOverlaySettingsError] = useState('')
+  const [mediaTransportError, setMediaTransportError] = useState('')
   const [whatsAppError, setWhatsAppError] = useState('')
   const [pollError, setPollError] = useState('')
+  const [networkAccessError, setNetworkAccessError] = useState('')
+  const [networkAccessSuccess, setNetworkAccessSuccess] = useState('')
   const [formState, setFormState] = useState(INITIAL_FORM)
   const [pollForm, setPollForm] = useState(INITIAL_POLL_FORM)
+  const [queueSearch, setQueueSearch] = useState('')
   const [fontOverrideForm, setFontOverrideForm] = useState({})
+  const [overlayAppearanceDrafts, setOverlayAppearanceDrafts] = useState({})
+  const [activeTab, setActiveTab] = useState('operation')
+  const [previewItemId, setPreviewItemId] = useState(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isActing, setIsActing] = useState(false)
   const [isConnecting, setIsConnecting] = useState(false)
@@ -99,6 +160,8 @@ function App() {
   const [isClosingPoll, setIsClosingPoll] = useState(false)
   const [isCleaningRuntime, setIsCleaningRuntime] = useState(false)
   const [isUpdatingOverlaySettings, setIsUpdatingOverlaySettings] = useState(false)
+  const [isSendingMediaCommand, setIsSendingMediaCommand] = useState(false)
+  const [isEnablingNetworkAccess, setIsEnablingNetworkAccess] = useState(false)
 
   useEffect(() => {
     let intervalId
@@ -247,7 +310,7 @@ function App() {
 
     const payload = {
       title: pollForm.title,
-      options: [pollForm.optionA, pollForm.optionB]
+      options: pollForm.options
     }
 
     const result = await window.api.polls.create(payload)
@@ -296,6 +359,29 @@ function App() {
       return
     }
 
+    await refreshOperationalState()
+  }
+
+  async function handleEnableNetworkAccess() {
+    setNetworkAccessError('')
+    setNetworkAccessSuccess('')
+    setIsEnablingNetworkAccess(true)
+
+    const port = backendStatus?.transport?.port
+    const result = await window.api.system.enableNetworkAccess({ port })
+
+    setIsEnablingNetworkAccess(false)
+
+    if (!result?.ok) {
+      setNetworkAccessError(result?.error || 'Falha ao habilitar acesso na rede.')
+      return
+    }
+
+    setNetworkAccessSuccess(
+      result?.data?.restarted
+        ? 'Acesso na rede liberado. O backend foi reiniciado para ouvir na rede local.'
+        : 'Acesso na rede liberado. Reinicie o backend com HOST=0.0.0.0 para ouvir na rede.'
+    )
     await refreshOperationalState()
   }
 
@@ -383,14 +469,214 @@ function App() {
     await refreshOperationalState()
   }
 
+  async function updateOverlaySettings(target, partialSettings) {
+    setOverlaySettingsError('')
+    setIsUpdatingOverlaySettings(true)
+
+    const result = await window.api.overlay.updateSettings({
+      [target]: partialSettings
+    })
+
+    setIsUpdatingOverlaySettings(false)
+
+    if (!result.ok) {
+      setOverlaySettingsError(result.error)
+      return false
+    }
+
+    await refreshOperationalState()
+    return true
+  }
+
+  function handleOverlayAppearanceDraftChange(target, key, value) {
+    setOverlayAppearanceDrafts((current) => ({
+      ...current,
+      [target]: {
+        ...(current[target] || {}),
+        [key]: value
+      }
+    }))
+  }
+
+  async function handleOverlayAppearanceChange(target, key, value) {
+    await updateOverlaySettings(target, {
+      [key]: value
+    })
+  }
+
+  async function commitOverlayBackgroundImage(target) {
+    const nextValue =
+      overlayAppearanceDrafts?.[target]?.backgroundImageUrl ??
+      backendStatus?.overlaySettings?.[target]?.backgroundImageUrl ??
+      ''
+
+    const didUpdate = await updateOverlaySettings(target, {
+      backgroundImageUrl: nextValue
+    })
+
+    if (!didUpdate) {
+      return
+    }
+
+    setOverlayAppearanceDrafts((current) => ({
+      ...current,
+      [target]: {
+        ...(current[target] || {}),
+        backgroundImageUrl: nextValue
+      }
+    }))
+  }
+
+  async function clearOverlayBackgroundImage(target) {
+    const didUpdate = await updateOverlaySettings(target, {
+      backgroundImageUrl: ''
+    })
+
+    if (!didUpdate) {
+      return
+    }
+
+    setOverlayAppearanceDrafts((current) => ({
+      ...current,
+      [target]: {
+        ...(current[target] || {}),
+        backgroundImageUrl: ''
+      }
+    }))
+  }
+
+  async function copyToClipboard(value) {
+    if (!value) {
+      return
+    }
+
+    if (navigator?.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(value)
+        return
+      } catch {
+        // fallback below
+      }
+    }
+
+    const textarea = document.createElement('textarea')
+    textarea.value = value
+    textarea.style.position = 'fixed'
+    textarea.style.opacity = '0'
+    document.body.appendChild(textarea)
+    textarea.focus()
+    textarea.select()
+
+    try {
+      document.execCommand('copy')
+    } finally {
+      document.body.removeChild(textarea)
+    }
+  }
+
+  async function handleMediaTransportCommand(action, payload = {}) {
+    setMediaTransportError('')
+    setIsSendingMediaCommand(true)
+
+    const result = await window.api.media.sendCommand({
+      action,
+      ...payload
+    })
+
+    setIsSendingMediaCommand(false)
+
+    if (!result.ok) {
+      setMediaTransportError(result.error)
+      return
+    }
+
+    await refreshOperationalState()
+  }
+
+  function handlePollOptionChange(index, value) {
+    setPollForm((current) => ({
+      ...current,
+      options: current.options.map((option, optionIndex) =>
+        optionIndex === index ? value : option
+      )
+    }))
+  }
+
+  function handleAddPollOption() {
+    setPollForm((current) => {
+      if (current.options.length >= 5) {
+        return current
+      }
+
+      return {
+        ...current,
+        options: [...current.options, '']
+      }
+    })
+  }
+
+  function handleRemovePollOption(index) {
+    setPollForm((current) => {
+      if (current.options.length <= 2) {
+        return current
+      }
+
+      return {
+        ...current,
+        options: current.options.filter((_option, optionIndex) => optionIndex !== index)
+      }
+    })
+  }
+
   const queue = moderationState?.moderationQueue || []
   const liveItem = moderationState?.liveItem
+  const normalizedQueueSearch = queueSearch.trim().toLowerCase()
+  const filteredQueue = normalizedQueueSearch
+    ? queue.filter((item) => {
+        const searchableText = [
+          item.author,
+          item.phone,
+          item.content,
+          item.source,
+          item.pollVote?.optionLabel
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase()
+
+        return searchableText.includes(normalizedQueueSearch)
+      })
+    : queue
+  const previewItem = queue.find((item) => item.id === previewItemId) || null
+  const mediaTransport = moderationState?.mediaTransport
   const counts = moderationState?.counts
   const activePoll = moderationState?.activePoll
   const whatsappStatusClass = getWhatsAppStatusClass(whatsAppStatus?.connection)
   const backendBaseUrl = config?.backendBaseUrl || ''
   const canRecoverWhatsAppSession =
     whatsAppStatus?.connection === 'error' || whatsAppStatus?.connection === 'disconnected'
+  const hasControllableMedia =
+    Boolean(liveItem) &&
+    (liveItem?.type === 'audio' || liveItem?.type === 'video') &&
+    mediaTransport?.itemId === liveItem?.id
+  const isVideoTransport = hasControllableMedia && liveItem?.type === 'video'
+  const isMediaPlaying = mediaTransport?.status === 'playing'
+  const mediaDuration = Number.isFinite(mediaTransport?.duration) ? mediaTransport.duration : 0
+  const mediaCurrentTime = Number.isFinite(mediaTransport?.currentTime)
+    ? mediaTransport.currentTime
+    : 0
+  const localOverlayMessageUrl =
+    backendStatus?.transport?.overlayMessageUrl || backendStatus?.transport?.overlayUrl || ''
+  const localOverlayPollUrl =
+    backendStatus?.transport?.overlayPollUrl || backendStatus?.transport?.overlayUrl || ''
+  const networkOverlayMessageUrl =
+    backendStatus?.transport?.overlayNetworkMessageUrl ||
+    backendStatus?.transport?.overlayNetworkUrl ||
+    ''
+  const networkOverlayPollUrl =
+    backendStatus?.transport?.overlayNetworkPollUrl ||
+    backendStatus?.transport?.overlayNetworkUrl ||
+    ''
 
   function getOverlayFontInputValue(target) {
     const overlaySettings = backendStatus?.overlaySettings
@@ -408,684 +694,1302 @@ function App() {
     )
   }
 
+  function getOverlayAppearanceValue(target, key) {
+    const draftValue = overlayAppearanceDrafts?.[target]?.[key]
+
+    if (draftValue !== undefined) {
+      return draftValue
+    }
+
+    return backendStatus?.overlaySettings?.[target]?.[key] ?? ''
+  }
+
   return (
-    <main className="app-shell">
-      <section className="hero-panel">
-        <div className="hero-copy">
-          <p className="eyebrow">MVP em construcao</p>
-          <h1>WhatsApp real conectado ao fluxo de moderacao</h1>
+    <main className="app-shell operator-shell">
+      <section className="operator-hero">
+        <div className="operator-hero-copy">
+          <p className="eyebrow">Central do operador</p>
+          <h1>Receba, revise e publique sem se perder na tela</h1>
           <p className="hero-text">
-            Esta fase integra sessao do WhatsApp via QR code e injeta texto, imagem, audio e video
-            diretamente na fila local de moderacao.
+            A operacao principal foi reorganizada em um fluxo simples: mensagens recebidas,
+            preview, decisao e transmissao.
           </p>
         </div>
 
-        <div className="hero-badges">
-          <span className="badge badge-accent">whatsapp-web.js</span>
-          <span className="badge">Texto, imagem, audio e video</span>
-          <span className="badge">Fila local + painel Electron</span>
+        <div className="operator-hero-actions">
+          <span className={`status-pill status-pill-${whatsappStatusClass}`}>
+            WhatsApp {getWhatsAppConnectionLabel(whatsAppStatus?.connection)}
+          </span>
+          <button
+            className="primary-button"
+            disabled={
+              isConnecting ||
+              isRecoveringRuntime ||
+              whatsAppStatus?.connection === 'starting' ||
+              whatsAppStatus?.connection === 'recovering' ||
+              whatsAppStatus?.connection === 'ready'
+            }
+            onClick={handleConnectWhatsApp}
+            type="button"
+          >
+            {isConnecting ? 'Conectando...' : 'Conectar WhatsApp'}
+          </button>
+          <button
+            className="ghost-button"
+            disabled={!canRecoverWhatsAppSession || isRecoveringRuntime || isConnecting}
+            onClick={handleResetWhatsAppRuntime}
+            type="button"
+          >
+            {isRecoveringRuntime ? 'Recuperando...' : 'Recuperar sessao'}
+          </button>
         </div>
       </section>
 
-      <section className="grid">
-        <article className="card">
-          <div className="card-header">
-            <div>
-              <p className="card-kicker">Backend local</p>
-              <h2>Saude do servico</h2>
-            </div>
-            <span className={`status-pill ${backendHealth.ok ? 'ok' : 'offline'}`}>
-              {backendHealth.ok ? 'Online' : 'Offline'}
-            </span>
-          </div>
-
-          <dl className="definition-list">
-            <div>
-              <dt>URL base</dt>
-              <dd>{config?.backendBaseUrl || 'Carregando...'}</dd>
-            </div>
-            <div>
-              <dt>Ultima checagem</dt>
-              <dd>{formatLastCheck(backendHealth.lastCheckedAt)}</dd>
-            </div>
-            <div>
-              <dt>Resposta</dt>
-              <dd>{backendHealth.ok ? backendHealth.data?.service : backendHealth.error}</dd>
-            </div>
-            <div>
-              <dt>Ambiente</dt>
-              <dd>{backendHealth.ok ? backendHealth.data?.environment : 'Indisponivel'}</dd>
-            </div>
-          </dl>
+      <section className="operator-summary">
+        <article className="summary-card">
+          <span className="summary-label">Mensagens aguardando</span>
+          <strong className="summary-value">{counts?.pending ?? 0}</strong>
+          <span className="summary-note">Itens que ainda precisam de decisao.</span>
         </article>
-
-        <article className="card">
-          <div className="card-header">
-            <div>
-              <p className="card-kicker">Runtime desktop</p>
-              <h2>Shell do operador</h2>
-            </div>
-          </div>
-
-          <dl className="definition-list">
-            <div>
-              <dt>Aplicativo</dt>
-              <dd>{shellInfo?.appName || 'Carregando...'}</dd>
-            </div>
-            <div>
-              <dt>Versao</dt>
-              <dd>{shellInfo?.appVersion || 'Carregando...'}</dd>
-            </div>
-            <div>
-              <dt>Plataforma</dt>
-              <dd>{shellInfo?.platform || 'Carregando...'}</dd>
-            </div>
-            <div>
-              <dt>Modo dev</dt>
-              <dd>{formatBooleanLabel(Boolean(shellInfo?.isDev))}</dd>
-            </div>
-          </dl>
+        <article className="summary-card">
+          <span className="summary-label">Preview atual</span>
+          <strong className="summary-value">{previewItem ? previewItem.author : 'Nenhum item'}</strong>
+          <span className="summary-note">
+            {previewItem ? `${getItemTypeLabel(previewItem.type)} pronto para revisao` : 'Escolha um item da fila para revisar.'}
+          </span>
         </article>
-
-        <article className="card">
-          <div className="card-header">
-            <div>
-              <p className="card-kicker">Estado atual</p>
-              <h2>Resumo de operacao</h2>
-            </div>
-          </div>
-
-          <dl className="definition-list">
-            <div>
-              <dt>Pendentes</dt>
-              <dd>{counts?.pending ?? 0}</dd>
-            </div>
-            <div>
-              <dt>Aprovados</dt>
-              <dd>{counts?.approved ?? 0}</dd>
-            </div>
-            <div>
-              <dt>Rejeitados</dt>
-              <dd>{counts?.rejected ?? 0}</dd>
-            </div>
-            <div>
-              <dt>Fila total</dt>
-              <dd>{backendStatus?.runtime?.queueSize ?? 0}</dd>
-            </div>
-          </dl>
+        <article className="summary-card">
+          <span className="summary-label">No ar</span>
+          <strong className="summary-value">{liveItem ? liveItem.author : 'Nada ao vivo'}</strong>
+          <span className="summary-note">
+            {liveItem ? `${getItemTypeLabel(liveItem.type)} exibido agora` : 'Nenhum item enviado para a transmissao.'}
+          </span>
         </article>
-
-        <article className="card">
-          <div className="card-header">
-            <div>
-              <p className="card-kicker">Saida local</p>
-              <h2>Overlay para vMix</h2>
-            </div>
-            <span className="status-pill ok">Overlay</span>
-          </div>
-
-          <dl className="definition-list">
-            <div>
-              <dt>URL do Browser Input</dt>
-              <dd>{backendStatus?.transport?.overlayUrl || 'Carregando...'}</dd>
-            </div>
-            <div>
-              <dt>Fonte</dt>
-              <dd>Live slot + enquete ativa</dd>
-            </div>
-            <div>
-              <dt>Atualizacao</dt>
-              <dd>Polling local sub-segundo</dd>
-            </div>
-            <div>
-              <dt>Status</dt>
-              <dd>{backendStatus?.features?.overlay || 'Carregando...'}</dd>
-            </div>
-          </dl>
-
-          {overlaySettingsError ? <p className="inline-error">{overlaySettingsError}</p> : null}
-
-          <div className="font-control-group">
-            <div className="font-control-row">
-              <span className="font-control-label">Fonte da mensagem</span>
-              <div className="font-control-actions">
-                <button
-                  className="ghost-button"
-                  disabled={isUpdatingOverlaySettings}
-                  onClick={() => handleOverlayFontSizeChange('message', -2)}
-                  type="button"
-                >
-                  A-
-                </button>
-                <label className="font-control-input-shell">
-                  <input
-                    className="font-control-input"
-                    disabled={isUpdatingOverlaySettings}
-                    inputMode="numeric"
-                    onBlur={() => void commitOverlayFontSize('message')}
-                    onChange={(event) =>
-                      handleFontOverrideInputChange('message', event.target.value)
-                    }
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter') {
-                        event.preventDefault()
-                        void commitOverlayFontSize('message')
-                      }
-                    }}
-                    type="text"
-                    value={getOverlayFontInputValue('message')}
-                  />
-                  <span className="font-control-unit">px</span>
-                </label>
-                <button
-                  className="ghost-button"
-                  disabled={isUpdatingOverlaySettings}
-                  onClick={() => handleOverlayFontSizeChange('message', 2)}
-                  type="button"
-                >
-                  A+
-                </button>
-              </div>
-            </div>
-
-            <div className="font-control-row">
-              <span className="font-control-label">Fonte da enquete</span>
-              <div className="font-control-actions">
-                <button
-                  className="ghost-button"
-                  disabled={isUpdatingOverlaySettings}
-                  onClick={() => handleOverlayFontSizeChange('poll', -2)}
-                  type="button"
-                >
-                  A-
-                </button>
-                <label className="font-control-input-shell">
-                  <input
-                    className="font-control-input"
-                    disabled={isUpdatingOverlaySettings}
-                    inputMode="numeric"
-                    onBlur={() => void commitOverlayFontSize('poll')}
-                    onChange={(event) => handleFontOverrideInputChange('poll', event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter') {
-                        event.preventDefault()
-                        void commitOverlayFontSize('poll')
-                      }
-                    }}
-                    type="text"
-                    value={getOverlayFontInputValue('poll')}
-                  />
-                  <span className="font-control-unit">px</span>
-                </label>
-                <button
-                  className="ghost-button"
-                  disabled={isUpdatingOverlaySettings}
-                  onClick={() => handleOverlayFontSizeChange('poll', 2)}
-                  type="button"
-                >
-                  A+
-                </button>
-              </div>
-            </div>
-          </div>
+        <article className="summary-card">
+          <span className="summary-label">Enquete</span>
+          <strong className="summary-value">{activePoll ? activePoll.title : 'Sem enquete'}</strong>
+          <span className="summary-note">
+            {activePoll ? `${activePoll.totalVoters} voto(s) unicos registrados` : 'Crie uma enquete quando precisar abrir votacao.'}
+          </span>
         </article>
+      </section>
 
-        <article className="card">
-          <div className="card-header">
-            <div>
-              <p className="card-kicker">Operacao local</p>
-              <h2>Recuperacao e limpeza</h2>
-            </div>
-          </div>
-
-          {cleanupError ? <p className="inline-error">{cleanupError}</p> : null}
-          {cleanupSuccess ? <p className="vote-match">{cleanupSuccess}</p> : null}
-
-          <dl className="definition-list">
-            <div>
-              <dt>Estado restaurado</dt>
-              <dd>{backendStatus?.runtime?.restoredFromDisk ? 'Sim' : 'Nao'}</dd>
-            </div>
-            <div>
-              <dt>Ultima persistencia</dt>
-              <dd>
-                {backendStatus?.runtime?.persistedAt
-                  ? formatTimestamp(backendStatus.runtime.persistedAt)
-                  : 'Sem persistencia anterior'}
-              </dd>
-            </div>
-            <div>
-              <dt>Arquivo de estado</dt>
-              <dd>{backendStatus?.runtime?.stateFilePath || 'Carregando...'}</dd>
-            </div>
-            <div>
-              <dt>Limpeza preserva</dt>
-              <dd>Sessao autenticada do WhatsApp</dd>
-            </div>
-          </dl>
-
-          <div className="form-actions">
-            <button
-              className="ghost-button ghost-button-danger"
-              disabled={isCleaningRuntime}
-              onClick={handleCleanupRuntime}
-              type="button"
-            >
-              {isCleaningRuntime ? 'Limpando dados...' : 'Limpar fila, enquete e midias locais'}
-            </button>
-          </div>
-        </article>
-
-        <article className="card wide-card">
-          <div className="card-header">
-            <div>
-              <p className="card-kicker">Sessao do WhatsApp</p>
-              <h2>Conectar e monitorar</h2>
-            </div>
-            <span className={`status-pill status-pill-${whatsappStatusClass}`}>
-              {getWhatsAppConnectionLabel(whatsAppStatus?.connection)}
-            </span>
-          </div>
-
+      {(whatsAppError || actionError || overlaySettingsError || pollError) ? (
+        <section className="operator-alerts">
           {whatsAppError ? <p className="inline-error">{whatsAppError}</p> : null}
-
-          <div className="status-layout">
-            <div className="status-block">
-              <h3>Sessao</h3>
-              <dl className="definition-list compact">
-                <div>
-                  <dt>Nome</dt>
-                  <dd>{whatsAppStatus?.sessionName || 'Carregando...'}</dd>
-                </div>
-                <div>
-                  <dt>Ultimo evento</dt>
-                  <dd>
-                    {whatsAppStatus?.lastEventAt
-                      ? formatTimestamp(whatsAppStatus.lastEventAt)
-                      : 'Sem eventos'}
-                  </dd>
-                </div>
-                <div>
-                  <dt>Conta</dt>
-                  <dd>{whatsAppStatus?.account?.pushname || 'Nao autenticada'}</dd>
-                </div>
-                <div>
-                  <dt>Identificador</dt>
-                  <dd>{whatsAppStatus?.account?.wid || 'Nao autenticado'}</dd>
-                </div>
-                <div>
-                  <dt>Auto connect</dt>
-                  <dd>{backendStatus?.whatsapp?.autoConnectEnabled ? 'Ativo' : 'Inativo'}</dd>
-                </div>
-                <div>
-                  <dt>Sessao salva</dt>
-                  <dd>
-                    {backendStatus?.whatsapp?.hasSavedSession ? 'Detectada' : 'Nao detectada'}
-                  </dd>
-                </div>
-              </dl>
-
-              {whatsAppStatus?.lastError ? (
-                <p className="inline-error">{whatsAppStatus.lastError}</p>
-              ) : null}
-
-              <div className="form-actions">
-                <button
-                  className="primary-button"
-                  disabled={
-                    isConnecting ||
-                    isRecoveringRuntime ||
-                    whatsAppStatus?.connection === 'starting' ||
-                    whatsAppStatus?.connection === 'recovering'
-                  }
-                  onClick={handleConnectWhatsApp}
-                  type="button"
-                >
-                  {isConnecting ? 'Iniciando sessao...' : 'Iniciar sessao do WhatsApp'}
-                </button>
-                <button
-                  className="ghost-button"
-                  disabled={!canRecoverWhatsAppSession || isRecoveringRuntime || isConnecting}
-                  onClick={handleResetWhatsAppRuntime}
-                  type="button"
-                >
-                  {isRecoveringRuntime ? 'Recuperando...' : 'Recuperar sessao local'}
-                </button>
-              </div>
-            </div>
-
-            <div className="status-block qr-block">
-              <h3>QR code</h3>
-              {whatsAppStatus?.qrCodeDataUrl ? (
-                <img
-                  alt="QR code do WhatsApp"
-                  className="qr-image"
-                  src={whatsAppStatus.qrCodeDataUrl}
-                />
-              ) : (
-                <p className="empty-state compact-text">
-                  O QR aparece aqui quando a sessao entrar em modo de pareamento.
-                </p>
-              )}
-            </div>
-          </div>
-        </article>
-
-        <article className="card wide-card">
-          <div className="card-header">
-            <div>
-              <p className="card-kicker">Enquete automatica</p>
-              <h2>Criar e acompanhar enquete ativa</h2>
-            </div>
-            <button
-              className="ghost-button"
-              disabled={isClosingPoll || !activePoll}
-              onClick={handleClosePoll}
-              type="button"
-            >
-              {isClosingPoll ? 'Encerrando...' : 'Encerrar enquete'}
-            </button>
-          </div>
-
+          {actionError ? <p className="inline-error">{actionError}</p> : null}
+          {overlaySettingsError ? <p className="inline-error">{overlaySettingsError}</p> : null}
           {pollError ? <p className="inline-error">{pollError}</p> : null}
+        </section>
+      ) : null}
 
-          <div className="status-layout">
-            <div className="status-block">
-              <h3>Nova enquete</h3>
-              <form className="message-form poll-form" onSubmit={handleCreatePoll}>
-                <label className="field field-full">
-                  <span>Titulo</span>
-                  <input
-                    type="text"
-                    value={pollForm.title}
-                    onChange={(event) => setPollForm({ ...pollForm, title: event.target.value })}
-                    placeholder="Ex.: Qual abertura voce prefere?"
-                  />
-                </label>
+      <section className="operator-tabs">
+        <button
+          className={`operator-tab-button ${activeTab === 'operation' ? 'is-active' : ''}`}
+          onClick={() => setActiveTab('operation')}
+          type="button"
+        >
+          Operacao
+        </button>
+        <button
+          className={`operator-tab-button ${activeTab === 'polls' ? 'is-active' : ''}`}
+          onClick={() => setActiveTab('polls')}
+          type="button"
+        >
+          Enquete
+        </button>
+        <button
+          className={`operator-tab-button ${activeTab === 'overlay' ? 'is-active' : ''}`}
+          onClick={() => setActiveTab('overlay')}
+          type="button"
+        >
+          Overlay
+        </button>
+        <button
+          className={`operator-tab-button ${activeTab === 'system' ? 'is-active' : ''}`}
+          onClick={() => setActiveTab('system')}
+          type="button"
+        >
+          Sistema
+        </button>
+      </section>
 
-                <label className="field">
-                  <span>Opcao 1</span>
-                  <input
-                    type="text"
-                    value={pollForm.optionA}
-                    onChange={(event) => setPollForm({ ...pollForm, optionA: event.target.value })}
-                    placeholder="Ex.: Vinheta A"
-                  />
-                </label>
-
-                <label className="field">
-                  <span>Opcao 2</span>
-                  <input
-                    type="text"
-                    value={pollForm.optionB}
-                    onChange={(event) => setPollForm({ ...pollForm, optionB: event.target.value })}
-                    placeholder="Ex.: Vinheta B"
-                  />
-                </label>
-
-                <div className="form-actions">
-                  <button className="primary-button" disabled={isCreatingPoll} type="submit">
-                    {isCreatingPoll ? 'Criando...' : 'Criar enquete'}
-                  </button>
-                </div>
-              </form>
-            </div>
-
-            <div className="status-block">
-              <h3>Enquete ativa</h3>
-              {activePoll ? (
-                <div className="poll-details">
-                  <p className="poll-title">{activePoll.title}</p>
-                  <p className="poll-meta">
-                    {activePoll.totalVoters} votante(s) unicos. Ultimo voto de cada numero vale.
+      {activeTab === 'operation' ? (
+        <section className="operator-layout">
+          <section className="operator-main">
+            <article className="operator-panel">
+              <div className="operator-panel-header">
+                <div>
+                  <p className="card-kicker">Entrada</p>
+                  <h2>Mensagens recebidas</h2>
+                  <p className="panel-subtitle">
+                    Escolha um item para revisar no preview antes de aprovar, rejeitar ou colocar no ar.
                   </p>
-                  <div className="poll-options">
-                    {activePoll.options.map((option) => (
-                      <article className="poll-option" key={option.id}>
-                        <div className="poll-option-header">
-                          <strong>{option.label}</strong>
-                          <span>{option.votes} voto(s)</span>
-                        </div>
-                        <p className="poll-aliases">Aceita: {option.aliases.join(', ')}</p>
-                      </article>
-                    ))}
+                </div>
+                <span className="mini-badge">{filteredQueue.length} item(ns)</span>
+              </div>
+
+              <div className="operator-queue-toolbar">
+                <label className="queue-search-field">
+                  <span>Buscar na fila</span>
+                  <input
+                    onChange={(event) => setQueueSearch(event.target.value)}
+                    placeholder="Procure por nome, grupo, numero ou trecho da mensagem"
+                    type="text"
+                    value={queueSearch}
+                  />
+                </label>
+                {queueSearch ? (
+                  <button className="ghost-button" onClick={() => setQueueSearch('')} type="button">
+                    Limpar busca
+                  </button>
+                ) : null}
+              </div>
+
+              {filteredQueue.length ? (
+                <div className="operator-queue-scroll">
+                  <div className="operator-queue">
+                    {filteredQueue.map((item) => {
+                      const isSelected = previewItemId === item.id
+
+                      return (
+                        <article
+                          className={`operator-queue-item ${isSelected ? 'is-selected' : ''}`}
+                          key={item.id}
+                          onClick={() => setPreviewItemId(item.id)}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter' || event.key === ' ') {
+                              event.preventDefault()
+                              setPreviewItemId(item.id)
+                            }
+                          }}
+                          role="button"
+                          tabIndex={0}
+                        >
+                          <div className="operator-queue-main">
+                            <div className="operator-queue-copy">
+                              <div className="operator-queue-topline">
+                                <h3>{item.author}</h3>
+                                <span className={`mini-status mini-status-${item.status}`}>
+                                  {getStatusLabel(item.status)}
+                                </span>
+                              </div>
+                              <p className="operator-queue-phone">{item.phone}</p>
+                              <p className="operator-queue-snippet">
+                                {item.content?.trim()
+                                  ? item.content
+                                  : `${getItemTypeLabel(item.type)} recebida sem texto adicional.`}
+                              </p>
+                              <div className="queue-meta">
+                                <span>{formatTimestamp(item.receivedAt)}</span>
+                                <span>{getItemTypeLabel(item.type)}</span>
+                                <span>{item.source}</span>
+                              </div>
+                              {item.pollVote ? (
+                                <p className="vote-match">
+                                  Voto reconhecido em {item.pollVote.optionLabel}
+                                  {item.pollVote.wasReplacement ? ' e substituiu o anterior.' : '.'}
+                                </p>
+                              ) : null}
+                            </div>
+                            <div className="operator-queue-actions">
+                              <button
+                                className={isSelected ? 'primary-button' : 'ghost-button'}
+                                disabled={isSelected}
+                                onClick={(event) => {
+                                  event.stopPropagation()
+                                  setPreviewItemId(item.id)
+                                }}
+                                type="button"
+                              >
+                                {isSelected ? 'Selecionado' : 'Revisar'}
+                              </button>
+                            </div>
+                          </div>
+                        </article>
+                      )
+                    })}
                   </div>
                 </div>
               ) : (
-                <p className="empty-state compact-text">
-                  Nenhuma enquete ativa. Ao criar uma enquete, votos por texto recebido no WhatsApp
-                  passam a ser apurados automaticamente.
+                <p className="empty-state">
+                  {queue.length
+                    ? 'Nenhum item encontrado com esse termo de busca.'
+                    : 'Nenhuma mensagem na fila. Quando o WhatsApp receber novas entradas, elas aparecem aqui.'}
                 </p>
               )}
-            </div>
-          </div>
-        </article>
+            </article>
 
-        <article className="card wide-card">
-          <div className="card-header">
-            <div>
-              <p className="card-kicker">Entrada local de apoio</p>
-              <h2>Adicionar mensagem manual de teste</h2>
-            </div>
-          </div>
+            <article className="operator-panel">
+              <div className="operator-panel-header">
+                <div>
+                  <p className="card-kicker">Revisao</p>
+                  <h2>Preview do operador</h2>
+                  <p className="panel-subtitle">
+                    Este e o lugar para ouvir, assistir ou ler antes de decidir.
+                  </p>
+                </div>
+                <button
+                  className="ghost-button"
+                  disabled={!previewItem}
+                  onClick={() => setPreviewItemId(null)}
+                  type="button"
+                >
+                  Limpar preview
+                </button>
+              </div>
 
-          <form className="message-form" onSubmit={handleSubmit}>
-            <label className="field">
-              <span>Autor</span>
-              <input
-                type="text"
-                value={formState.author}
-                onChange={(event) => setFormState({ ...formState, author: event.target.value })}
-                placeholder="Ex.: Maria Souza"
-              />
-            </label>
-
-            <label className="field">
-              <span>Telefone</span>
-              <input
-                type="text"
-                value={formState.phone}
-                onChange={(event) => setFormState({ ...formState, phone: event.target.value })}
-                placeholder="Ex.: 11999990000"
-              />
-            </label>
-
-            <label className="field field-full">
-              <span>Mensagem</span>
-              <textarea
-                value={formState.content}
-                onChange={(event) => setFormState({ ...formState, content: event.target.value })}
-                placeholder="Use este formulario apenas para testes locais do fluxo."
-                rows={4}
-              />
-            </label>
-
-            {submissionError ? <p className="inline-error">{submissionError}</p> : null}
-
-            <div className="form-actions">
-              <button className="primary-button" disabled={isSubmitting} type="submit">
-                {isSubmitting ? 'Adicionando...' : 'Adicionar a fila'}
-              </button>
-            </div>
-          </form>
-        </article>
-
-        <article className="card wide-card">
-          <div className="card-header">
-            <div>
-              <p className="card-kicker">Fila de moderacao</p>
-              <h2>Mensagens recebidas</h2>
-            </div>
-          </div>
-
-          {actionError ? <p className="inline-error">{actionError}</p> : null}
-
-          {queue.length ? (
-            <div className="queue-list">
-              {queue.map((item) => (
-                <article className="queue-item" key={item.id}>
-                  <div className="queue-item-header">
+              {previewItem ? (
+                <article className="live-item live-item-preview">
+                  <div className="live-item-header">
                     <div>
-                      <h3>{item.author}</h3>
-                      <p>{item.phone}</p>
+                      <h3>{previewItem.author}</h3>
+                      <p>{previewItem.phone}</p>
                     </div>
-                    <span className={`mini-status mini-status-${item.status}`}>
-                      {getStatusLabel(item.status)}
+                    <span className={`mini-status mini-status-${previewItem.status}`}>
+                      {getStatusLabel(previewItem.status)}
                     </span>
                   </div>
 
-                  {item.type === 'image' && item.media?.publicPath ? (
+                  {previewItem.type === 'image' && previewItem.media?.publicPath ? (
                     <img
-                      alt={`Imagem enviada por ${item.author}`}
-                      className="queue-image"
-                      src={resolveMediaUrl(backendBaseUrl, item.media.publicPath)}
+                      alt={`Preview de imagem enviada por ${previewItem.author}`}
+                      className="queue-image queue-image-preview"
+                      src={resolveMediaUrl(backendBaseUrl, previewItem.media.publicPath)}
                     />
                   ) : null}
 
-                  {item.type === 'audio' && item.media?.publicPath ? (
+                  {previewItem.type === 'audio' && previewItem.media?.publicPath ? (
                     <audio
-                      className="queue-audio"
+                      className="queue-audio queue-audio-preview"
                       controls
                       preload="metadata"
-                      src={resolveMediaUrl(backendBaseUrl, item.media.publicPath)}
+                      src={resolveMediaUrl(backendBaseUrl, previewItem.media.publicPath)}
                     >
                       Seu navegador nao conseguiu carregar este audio.
                     </audio>
                   ) : null}
 
-                  {item.type === 'video' && item.media?.publicPath ? (
+                  {previewItem.type === 'video' && previewItem.media?.publicPath ? (
                     <video
-                      className="queue-video"
+                      className="queue-video queue-video-preview"
                       controls
                       preload="metadata"
-                      src={resolveMediaUrl(backendBaseUrl, item.media.publicPath)}
+                      src={resolveMediaUrl(backendBaseUrl, previewItem.media.publicPath)}
                     >
                       Seu navegador nao conseguiu carregar este video.
                     </video>
                   ) : null}
 
-                  {item.content ? <p className="queue-message">{item.content}</p> : null}
+                  {previewItem.content ? <p className="queue-message">{previewItem.content}</p> : null}
 
                   <div className="queue-meta">
-                    <span>{formatTimestamp(item.receivedAt)}</span>
-                    <span>{item.source}</span>
-                    <span>{item.id}</span>
+                    <span>{formatTimestamp(previewItem.receivedAt)}</span>
+                    <span>{getItemTypeLabel(previewItem.type)}</span>
                   </div>
 
-                  {item.pollVote ? (
-                    <p className="vote-match">
-                      Voto reconhecido: {item.pollVote.optionLabel}
-                      {item.pollVote.wasReplacement ? ' (substituiu voto anterior)' : ''}
-                    </p>
-                  ) : null}
+                  <p className="preview-guidance">{getPreviewGuidance(previewItem.status)}</p>
 
-                  <div className="item-actions">
+                  <div className="preview-decision-bar">
                     <button
                       className="ghost-button"
-                      disabled={isActing || item.status === 'approved' || item.status === 'on_air'}
-                      onClick={() => runItemAction(() => window.api.backend.approveItem(item.id))}
+                      disabled={
+                        isActing ||
+                        previewItem.status === 'approved' ||
+                        previewItem.status === 'on_air'
+                      }
+                      onClick={() =>
+                        runItemAction(() => window.api.backend.approveItem(previewItem.id))
+                      }
                       type="button"
                     >
                       Aprovar
                     </button>
                     <button
                       className="ghost-button ghost-button-danger"
-                      disabled={isActing || item.status === 'rejected'}
-                      onClick={() => runItemAction(() => window.api.backend.rejectItem(item.id))}
+                      disabled={isActing || previewItem.status === 'rejected'}
+                      onClick={() =>
+                        runItemAction(() => window.api.backend.rejectItem(previewItem.id))
+                      }
                       type="button"
                     >
                       Rejeitar
                     </button>
                     <button
                       className="primary-button"
-                      disabled={isActing || item.status === 'rejected'}
-                      onClick={() => runItemAction(() => window.api.backend.setLiveItem(item.id))}
+                      disabled={isActing || previewItem.status === 'rejected'}
+                      onClick={() =>
+                        runItemAction(() => window.api.backend.setLiveItem(previewItem.id))
+                      }
                       type="button"
                     >
                       Colocar no ar
                     </button>
                   </div>
                 </article>
-              ))}
-            </div>
-          ) : (
-            <p className="empty-state">
-              Nenhuma mensagem na fila. Inicie a sessao do WhatsApp ou use a entrada manual para
-              validar o fluxo.
-            </p>
-          )}
-        </article>
-
-        <article className="card wide-card">
-          <div className="card-header">
-            <div>
-              <p className="card-kicker">Live slot</p>
-              <h2>Item principal no ar</h2>
-            </div>
-
-            <button
-              className="ghost-button"
-              disabled={isActing || !liveItem}
-              onClick={() => runItemAction(() => window.api.backend.clearLiveItem())}
-              type="button"
-            >
-              Limpar slot
-            </button>
-          </div>
-
-          {liveItem ? (
-            <article className="live-item">
-              <div className="live-item-header">
-                <div>
-                  <h3>{liveItem.author}</h3>
-                  <p>{liveItem.phone}</p>
-                </div>
-                <span className="status-pill ok">No ar</span>
-              </div>
-              {liveItem.type === 'image' && liveItem.media?.publicPath ? (
-                <img
-                  alt={`Imagem no ar enviada por ${liveItem.author}`}
-                  className="queue-image"
-                  src={resolveMediaUrl(backendBaseUrl, liveItem.media.publicPath)}
-                />
-              ) : null}
-              {liveItem.type === 'audio' && liveItem.media?.publicPath ? (
-                <audio
-                  autoPlay
-                  className="queue-audio"
-                  controls
-                  preload="metadata"
-                  src={resolveMediaUrl(backendBaseUrl, liveItem.media.publicPath)}
-                >
-                  Seu navegador nao conseguiu carregar este audio.
-                </audio>
-              ) : null}
-              {liveItem.type === 'video' && liveItem.media?.publicPath ? (
-                <video
-                  autoPlay
-                  className="queue-video"
-                  controls
-                  preload="metadata"
-                  src={resolveMediaUrl(backendBaseUrl, liveItem.media.publicPath)}
-                >
-                  Seu navegador nao conseguiu carregar este video.
-                </video>
-              ) : null}
-              {liveItem.content ? <p className="queue-message">{liveItem.content}</p> : null}
-              <div className="queue-meta">
-                <span>{formatTimestamp(liveItem.receivedAt)}</span>
-                <span>{liveItem.source}</span>
-                <span>{liveItem.id}</span>
-              </div>
+              ) : (
+                <p className="empty-state">
+                  Escolha um item em <code>Mensagens recebidas</code> para abrir o preview.
+                </p>
+              )}
             </article>
-          ) : (
-            <p className="empty-state">
-              Nenhum item esta no ar. Aproxime o fluxo real aprovando uma mensagem e usando `Colocar
-              no ar`.
-            </p>
-          )}
-        </article>
-      </section>
+          </section>
+
+          <aside className="operator-side">
+            <article className="operator-panel">
+              <div className="operator-panel-header">
+                <div>
+                  <p className="card-kicker">Transmissao</p>
+                  <h2>No ar</h2>
+                  <p className="panel-subtitle">
+                    O que esta sendo exibido agora no overlay usado pelo vMix.
+                  </p>
+                </div>
+                <button
+                  className="ghost-button"
+                  disabled={isActing || !liveItem}
+                  onClick={() => runItemAction(() => window.api.backend.clearLiveItem())}
+                  type="button"
+                >
+                  Limpar
+                </button>
+              </div>
+
+              {liveItem ? (
+                <article className="live-item">
+                  <div className="live-item-header">
+                    <div>
+                      <h3>{liveItem.author}</h3>
+                      <p>{liveItem.phone}</p>
+                    </div>
+                    <span className="status-pill ok">No ar</span>
+                  </div>
+
+                  {liveItem.type === 'image' && liveItem.media?.publicPath ? (
+                    <img
+                      alt={`Imagem no ar enviada por ${liveItem.author}`}
+                      className="queue-image queue-image-preview"
+                      src={resolveMediaUrl(backendBaseUrl, liveItem.media.publicPath)}
+                    />
+                  ) : null}
+                  {liveItem.type === 'audio' && liveItem.media?.publicPath ? (
+                    <div className="transport-media-hint">
+                      Audio no ar controlado pela barra de reproducao abaixo.
+                    </div>
+                  ) : null}
+                  {liveItem.type === 'video' && liveItem.media?.publicPath ? (
+                    <video
+                      className="queue-video queue-video-preview"
+                      preload="metadata"
+                      src={resolveMediaUrl(backendBaseUrl, liveItem.media.publicPath)}
+                    >
+                      Seu navegador nao conseguiu carregar este video.
+                    </video>
+                  ) : null}
+                  {liveItem.content ? <p className="queue-message">{liveItem.content}</p> : null}
+
+                  <div className="queue-meta">
+                    <span>{formatTimestamp(liveItem.receivedAt)}</span>
+                    <span>{getItemTypeLabel(liveItem.type)}</span>
+                  </div>
+
+                  {hasControllableMedia ? (
+                    <div className="transport-panel">
+                      <div className="transport-summary">
+                        <div>
+                          <p className="transport-kicker">Controle de reproducao</p>
+                          <p className="transport-status">
+                            {liveItem.type === 'video' ? 'Video' : 'Audio'} |{' '}
+                            {getTransportStatusLabel(mediaTransport?.status)} |{' '}
+                            {formatDurationLabel(mediaCurrentTime)} /{' '}
+                            {formatDurationLabel(mediaDuration)}
+                          </p>
+                        </div>
+                        {mediaTransport?.error ? (
+                          <p className="inline-error">{mediaTransport.error}</p>
+                        ) : null}
+                      </div>
+
+                      {mediaTransportError ? <p className="inline-error">{mediaTransportError}</p> : null}
+
+                      <div className="transport-bar">
+                        <button
+                          className="primary-button transport-toggle"
+                          disabled={isSendingMediaCommand}
+                          onClick={() =>
+                            void handleMediaTransportCommand(isMediaPlaying ? 'pause' : 'play')
+                          }
+                          type="button"
+                        >
+                          {isMediaPlaying ? 'Pause' : 'Play'}
+                        </button>
+
+                        {mediaDuration > 0 ? (
+                          <input
+                            className="transport-slider"
+                            disabled={isSendingMediaCommand}
+                            max={mediaDuration}
+                            min="0"
+                            onChange={(event) =>
+                              void handleMediaTransportCommand('seek_to', {
+                                targetTime: Number(event.target.value)
+                              })
+                            }
+                            step="0.1"
+                            type="range"
+                            value={Math.min(mediaCurrentTime, mediaDuration)}
+                          />
+                        ) : (
+                          <div className="transport-slider-placeholder">
+                            Carregando duracao da midia...
+                          </div>
+                        )}
+                      </div>
+
+                      {isVideoTransport ? (
+                        <div className="transport-actions transport-actions-secondary">
+                          <button
+                            className="ghost-button"
+                            disabled={isSendingMediaCommand}
+                            onClick={() =>
+                              void handleMediaTransportCommand('seek_relative', {
+                                deltaSeconds: -10
+                              })
+                            }
+                            type="button"
+                          >
+                            -10s
+                          </button>
+                          <button
+                            className="ghost-button"
+                            disabled={isSendingMediaCommand}
+                            onClick={() =>
+                              void handleMediaTransportCommand('seek_relative', {
+                                deltaSeconds: 10
+                              })
+                            }
+                            type="button"
+                          >
+                            +10s
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </article>
+              ) : (
+                <p className="empty-state">
+                  Nenhum item foi enviado para a transmissao ainda.
+                </p>
+              )}
+            </article>
+          </aside>
+        </section>
+      ) : null}
+
+      {activeTab === 'polls' ? (
+        <section className="operator-tab-panel-stack">
+          <article className="operator-panel">
+            <div className="operator-panel-header">
+              <div>
+                <p className="card-kicker">Enquete</p>
+                <h2>Votacao ao vivo</h2>
+                <p className="panel-subtitle">
+                  Crie rapidamente uma enquete e acompanhe os votos recebidos.
+                </p>
+              </div>
+              <button
+                className="ghost-button"
+                disabled={isClosingPoll || !activePoll}
+                onClick={handleClosePoll}
+                type="button"
+              >
+                {isClosingPoll ? 'Encerrando...' : 'Encerrar'}
+              </button>
+            </div>
+
+            {activePoll ? (
+              <div className="poll-details">
+                <p className="poll-title">{activePoll.title}</p>
+                <p className="poll-meta">
+                  {activePoll.totalVoters} voto(s) unicos. O ultimo voto de cada numero vale.
+                </p>
+                <div className="poll-options">
+                  {activePoll.options.map((option) => (
+                    <article className="poll-option" key={option.id}>
+                      <div className="poll-option-header">
+                        <strong>{option.label}</strong>
+                        <span>{option.votes} voto(s)</span>
+                      </div>
+                      <p className="poll-aliases">Aceita: {option.aliases.join(', ')}</p>
+                    </article>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <form className="message-form poll-form compact-form" onSubmit={handleCreatePoll}>
+                <label className="field field-full">
+                  <span>Titulo</span>
+                  <input
+                    onChange={(event) => setPollForm({ ...pollForm, title: event.target.value })}
+                    placeholder="Ex.: Qual abertura voce prefere?"
+                    type="text"
+                    value={pollForm.title}
+                  />
+                </label>
+                <div className="poll-options-builder field field-full">
+                  <div className="poll-options-builder-list">
+                    {pollForm.options.map((option, index) => (
+                      <div className="poll-option-editor" key={`poll-option-input-${index}`}>
+                        <label className="field">
+                          <span>Opcao {index + 1}</span>
+                          <input
+                            onChange={(event) => handlePollOptionChange(index, event.target.value)}
+                            placeholder={`Ex.: Opcao ${index + 1}`}
+                            type="text"
+                            value={option}
+                          />
+                        </label>
+                        <button
+                          className="ghost-button"
+                          disabled={pollForm.options.length <= 2}
+                          onClick={() => handleRemovePollOption(index)}
+                          type="button"
+                        >
+                          Remover
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="poll-options-builder-actions">
+                    <button
+                      className="ghost-button"
+                      disabled={pollForm.options.length >= 5}
+                      onClick={handleAddPollOption}
+                      type="button"
+                    >
+                      Adicionar opcao
+                    </button>
+                  </div>
+                </div>
+                <div className="form-actions">
+                  <button className="primary-button" disabled={isCreatingPoll} type="submit">
+                    {isCreatingPoll ? 'Criando...' : 'Criar enquete'}
+                  </button>
+                </div>
+              </form>
+            )}
+          </article>
+        </section>
+      ) : null}
+
+      {activeTab === 'overlay' ? (
+        <section className="operator-tab-panel-stack">
+          <article className="operator-panel">
+            <div className="operator-panel-header">
+              <div>
+                <p className="card-kicker">Overlay</p>
+                <h2>Personalizacao rapida</h2>
+                <p className="panel-subtitle">
+                  Ajuste fonte, cores e fundo das mensagens e enquetes sem editar codigo.
+                </p>
+              </div>
+            </div>
+
+            <div className="overlay-style-grid">
+              <section className="overlay-style-card overlay-style-card-wide">
+                <div className="overlay-style-header">
+                  <div>
+                    <p className="card-kicker">Transmissao</p>
+                    <h3>Fundo geral</h3>
+                  </div>
+                </div>
+
+                <div className="overlay-style-fields">
+                  <label className="field field-full">
+                    <span>Fundo da transmissao</span>
+                    <select
+                      disabled={isUpdatingOverlaySettings}
+                      onChange={(event) =>
+                        void handleOverlayAppearanceChange(
+                          'canvas',
+                          'enabled',
+                          event.target.value === 'enabled'
+                        )
+                      }
+                      value={getOverlayAppearanceValue('canvas', 'enabled') ? 'enabled' : 'transparent'}
+                    >
+                      <option value="transparent">Transparente (padrao)</option>
+                      <option value="enabled">Aplicar fundo customizado</option>
+                    </select>
+                  </label>
+
+                  <label className="field">
+                    <span>Cor de fundo</span>
+                    <input
+                      disabled={isUpdatingOverlaySettings}
+                      onChange={(event) =>
+                        void handleOverlayAppearanceChange(
+                          'canvas',
+                          'backgroundColor',
+                          event.target.value
+                        )
+                      }
+                      type="color"
+                      value={getOverlayAppearanceValue('canvas', 'backgroundColor')}
+                    />
+                  </label>
+
+                  <label className="field field-full">
+                    <span>Imagem de fundo opcional</span>
+                    <input
+                      disabled={isUpdatingOverlaySettings}
+                      onBlur={() => void commitOverlayBackgroundImage('canvas')}
+                      onChange={(event) =>
+                        handleOverlayAppearanceDraftChange(
+                          'canvas',
+                          'backgroundImageUrl',
+                          event.target.value
+                        )
+                      }
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          event.preventDefault()
+                          void commitOverlayBackgroundImage('canvas')
+                        }
+                      }}
+                      placeholder="Cole uma URL de imagem. Deixe vazio para usar so a cor."
+                      type="text"
+                      value={getOverlayAppearanceValue('canvas', 'backgroundImageUrl')}
+                    />
+                  </label>
+                </div>
+
+                <div className="overlay-style-actions">
+                  <button
+                    className="ghost-button"
+                    disabled={isUpdatingOverlaySettings}
+                    onClick={() => void clearOverlayBackgroundImage('canvas')}
+                    type="button"
+                  >
+                    Remover imagem do fundo
+                  </button>
+                </div>
+              </section>
+
+              <section className="overlay-style-card">
+                <div className="overlay-style-header">
+                  <div>
+                    <p className="card-kicker">Mensagem</p>
+                    <h3>Card da mensagem</h3>
+                  </div>
+                </div>
+
+                <div className="font-control-group">
+                  <div className="font-control-row">
+                    <span className="font-control-label">Tamanho</span>
+                    <div className="font-control-actions">
+                      <button
+                        className="ghost-button"
+                        disabled={isUpdatingOverlaySettings}
+                        onClick={() => handleOverlayFontSizeChange('message', -2)}
+                        type="button"
+                      >
+                        A-
+                      </button>
+                      <label className="font-control-input-shell">
+                        <input
+                          className="font-control-input"
+                          disabled={isUpdatingOverlaySettings}
+                          inputMode="numeric"
+                          onBlur={() => void commitOverlayFontSize('message')}
+                          onChange={(event) =>
+                            handleFontOverrideInputChange('message', event.target.value)
+                          }
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter') {
+                              event.preventDefault()
+                              void commitOverlayFontSize('message')
+                            }
+                          }}
+                          type="text"
+                          value={getOverlayFontInputValue('message')}
+                        />
+                        <span className="font-control-unit">px</span>
+                      </label>
+                      <button
+                        className="ghost-button"
+                        disabled={isUpdatingOverlaySettings}
+                        onClick={() => handleOverlayFontSizeChange('message', 2)}
+                        type="button"
+                      >
+                        A+
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="overlay-style-fields">
+                  <label className="field">
+                    <span>Fonte</span>
+                    <select
+                      disabled={isUpdatingOverlaySettings}
+                      onChange={(event) =>
+                        void handleOverlayAppearanceChange(
+                          'message',
+                          'fontFamily',
+                          event.target.value
+                        )
+                      }
+                      value={getOverlayAppearanceValue('message', 'fontFamily')}
+                    >
+                      {OVERLAY_FONT_OPTIONS.map((fontOption) => (
+                        <option key={fontOption} value={fontOption}>
+                          {fontOption}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="field">
+                    <span>Cor do texto</span>
+                    <input
+                      disabled={isUpdatingOverlaySettings}
+                      onChange={(event) =>
+                        void handleOverlayAppearanceChange(
+                          'message',
+                          'textColor',
+                          event.target.value
+                        )
+                      }
+                      type="color"
+                      value={getOverlayAppearanceValue('message', 'textColor')}
+                    />
+                  </label>
+
+                  <label className="field">
+                    <span>Cor de destaque</span>
+                    <input
+                      disabled={isUpdatingOverlaySettings}
+                      onChange={(event) =>
+                        void handleOverlayAppearanceChange(
+                          'message',
+                          'accentColor',
+                          event.target.value
+                        )
+                      }
+                      type="color"
+                      value={getOverlayAppearanceValue('message', 'accentColor')}
+                    />
+                  </label>
+
+                  <label className="field">
+                    <span>Cor de fundo</span>
+                    <input
+                      disabled={isUpdatingOverlaySettings}
+                      onChange={(event) =>
+                        void handleOverlayAppearanceChange(
+                          'message',
+                          'backgroundColor',
+                          event.target.value
+                        )
+                      }
+                      type="color"
+                      value={getOverlayAppearanceValue('message', 'backgroundColor')}
+                    />
+                  </label>
+
+                  <label className="field field-full">
+                    <span>Imagem de fundo opcional</span>
+                    <input
+                      disabled={isUpdatingOverlaySettings}
+                      onBlur={() => void commitOverlayBackgroundImage('message')}
+                      onChange={(event) =>
+                        handleOverlayAppearanceDraftChange(
+                          'message',
+                          'backgroundImageUrl',
+                          event.target.value
+                        )
+                      }
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          event.preventDefault()
+                          void commitOverlayBackgroundImage('message')
+                        }
+                      }}
+                      placeholder="Cole uma URL de imagem. Deixe vazio para usar so a cor."
+                      type="text"
+                      value={getOverlayAppearanceValue('message', 'backgroundImageUrl')}
+                    />
+                  </label>
+                </div>
+
+                <div className="overlay-style-actions">
+                  <button
+                    className="ghost-button"
+                    disabled={isUpdatingOverlaySettings}
+                    onClick={() => void clearOverlayBackgroundImage('message')}
+                    type="button"
+                  >
+                    Remover imagem da mensagem
+                  </button>
+                </div>
+              </section>
+
+              <section className="overlay-style-card">
+                <div className="overlay-style-header">
+                  <div>
+                    <p className="card-kicker">Enquete</p>
+                    <h3>Card da enquete</h3>
+                  </div>
+                </div>
+
+                <div className="font-control-group">
+                  <div className="font-control-row">
+                    <span className="font-control-label">Tamanho</span>
+                    <div className="font-control-actions">
+                      <button
+                        className="ghost-button"
+                        disabled={isUpdatingOverlaySettings}
+                        onClick={() => handleOverlayFontSizeChange('poll', -2)}
+                        type="button"
+                      >
+                        A-
+                      </button>
+                      <label className="font-control-input-shell">
+                        <input
+                          className="font-control-input"
+                          disabled={isUpdatingOverlaySettings}
+                          inputMode="numeric"
+                          onBlur={() => void commitOverlayFontSize('poll')}
+                          onChange={(event) =>
+                            handleFontOverrideInputChange('poll', event.target.value)
+                          }
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter') {
+                              event.preventDefault()
+                              void commitOverlayFontSize('poll')
+                            }
+                          }}
+                          type="text"
+                          value={getOverlayFontInputValue('poll')}
+                        />
+                        <span className="font-control-unit">px</span>
+                      </label>
+                      <button
+                        className="ghost-button"
+                        disabled={isUpdatingOverlaySettings}
+                        onClick={() => handleOverlayFontSizeChange('poll', 2)}
+                        type="button"
+                      >
+                        A+
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="overlay-style-fields">
+                  <label className="field">
+                    <span>Fonte</span>
+                    <select
+                      disabled={isUpdatingOverlaySettings}
+                      onChange={(event) =>
+                        void handleOverlayAppearanceChange('poll', 'fontFamily', event.target.value)
+                      }
+                      value={getOverlayAppearanceValue('poll', 'fontFamily')}
+                    >
+                      {OVERLAY_FONT_OPTIONS.map((fontOption) => (
+                        <option key={fontOption} value={fontOption}>
+                          {fontOption}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="field">
+                    <span>Cor do texto</span>
+                    <input
+                      disabled={isUpdatingOverlaySettings}
+                      onChange={(event) =>
+                        void handleOverlayAppearanceChange('poll', 'textColor', event.target.value)
+                      }
+                      type="color"
+                      value={getOverlayAppearanceValue('poll', 'textColor')}
+                    />
+                  </label>
+
+                  <label className="field">
+                    <span>Cor de destaque</span>
+                    <input
+                      disabled={isUpdatingOverlaySettings}
+                      onChange={(event) =>
+                        void handleOverlayAppearanceChange('poll', 'accentColor', event.target.value)
+                      }
+                      type="color"
+                      value={getOverlayAppearanceValue('poll', 'accentColor')}
+                    />
+                  </label>
+
+                  <label className="field">
+                    <span>Cor de fundo</span>
+                    <input
+                      disabled={isUpdatingOverlaySettings}
+                      onChange={(event) =>
+                        void handleOverlayAppearanceChange(
+                          'poll',
+                          'backgroundColor',
+                          event.target.value
+                        )
+                      }
+                      type="color"
+                      value={getOverlayAppearanceValue('poll', 'backgroundColor')}
+                    />
+                  </label>
+
+                  <label className="field field-full">
+                    <span>Imagem de fundo opcional</span>
+                    <input
+                      disabled={isUpdatingOverlaySettings}
+                      onBlur={() => void commitOverlayBackgroundImage('poll')}
+                      onChange={(event) =>
+                        handleOverlayAppearanceDraftChange(
+                          'poll',
+                          'backgroundImageUrl',
+                          event.target.value
+                        )
+                      }
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          event.preventDefault()
+                          void commitOverlayBackgroundImage('poll')
+                        }
+                      }}
+                      placeholder="Cole uma URL de imagem. Deixe vazio para usar so a cor."
+                      type="text"
+                      value={getOverlayAppearanceValue('poll', 'backgroundImageUrl')}
+                    />
+                  </label>
+                </div>
+
+                <div className="overlay-style-actions">
+                  <button
+                    className="ghost-button"
+                    disabled={isUpdatingOverlaySettings}
+                    onClick={() => void clearOverlayBackgroundImage('poll')}
+                    type="button"
+                  >
+                    Remover imagem da enquete
+                  </button>
+                </div>
+              </section>
+            </div>
+          </article>
+
+          <article className="operator-panel">
+            <div className="operator-panel-header">
+              <div>
+                <p className="card-kicker">Saida</p>
+                <h2>Uso no vMix</h2>
+                <p className="panel-subtitle">
+                  Use estas URLs no Browser Input e mantenha o ajuste visual centralizado aqui. Na
+                  primeira execucao, permita a conexao quando o Windows solicitar acesso a rede.
+                </p>
+              </div>
+            </div>
+
+            <dl className="definition-list compact">
+              <div>
+                <dt>Overlay (mensagens - local)</dt>
+                <dd className="url-row">
+                  <span>{localOverlayMessageUrl || 'Carregando...'}</span>
+                  <button
+                    className="ghost-button ghost-button-compact"
+                    disabled={!localOverlayMessageUrl}
+                    onClick={() => void copyToClipboard(localOverlayMessageUrl)}
+                    type="button"
+                  >
+                    Copiar
+                  </button>
+                </dd>
+              </div>
+              <div>
+                <dt>Overlay (mensagens - rede)</dt>
+                <dd className="url-row">
+                  <span>{networkOverlayMessageUrl || 'Indisponivel'}</span>
+                  <button
+                    className="ghost-button ghost-button-compact"
+                    disabled={!networkOverlayMessageUrl}
+                    onClick={() => void copyToClipboard(networkOverlayMessageUrl)}
+                    type="button"
+                  >
+                    Copiar
+                  </button>
+                </dd>
+              </div>
+              <div>
+                <dt>Overlay (enquete - local)</dt>
+                <dd className="url-row">
+                  <span>{localOverlayPollUrl || 'Carregando...'}</span>
+                  <button
+                    className="ghost-button ghost-button-compact"
+                    disabled={!localOverlayPollUrl}
+                    onClick={() => void copyToClipboard(localOverlayPollUrl)}
+                    type="button"
+                  >
+                    Copiar
+                  </button>
+                </dd>
+              </div>
+              <div>
+                <dt>Overlay (enquete - rede)</dt>
+                <dd className="url-row">
+                  <span>{networkOverlayPollUrl || 'Indisponivel'}</span>
+                  <button
+                    className="ghost-button ghost-button-compact"
+                    disabled={!networkOverlayPollUrl}
+                    onClick={() => void copyToClipboard(networkOverlayPollUrl)}
+                    type="button"
+                  >
+                    Copiar
+                  </button>
+                </dd>
+              </div>
+              <div>
+                <dt>Status do backend</dt>
+                <dd>{backendHealth.ok ? 'Online' : backendHealth.error}</dd>
+              </div>
+            </dl>
+
+            <div className="network-access-panel">
+              <p className="network-access-note">
+                Para compartilhar o overlay na rede local, permita a conexao no firewall do Windows.
+              </p>
+              <div className="network-access-actions">
+                <button
+                  className="ghost-button"
+                  disabled={isEnablingNetworkAccess || !backendStatus?.transport?.port}
+                  onClick={() => void handleEnableNetworkAccess()}
+                  type="button"
+                >
+                  {isEnablingNetworkAccess ? 'Solicitando permissao...' : 'Permitir acesso na rede'}
+                </button>
+                {networkAccessSuccess ? (
+                  <p className="vote-match">{networkAccessSuccess}</p>
+                ) : null}
+                {networkAccessError ? <p className="inline-error">{networkAccessError}</p> : null}
+              </div>
+            </div>
+          </article>
+        </section>
+      ) : null}
+
+      {activeTab === 'system' ? (
+        <section className="operator-tab-panel-stack">
+          <article className="operator-panel">
+            <div className="operator-panel-header">
+              <div>
+                <p className="card-kicker">Sistema</p>
+                <h2>Manutencao e apoio</h2>
+                <p className="panel-subtitle">
+                  Recursos tecnicos e operacionais menos frequentes, separados da rotina principal.
+                </p>
+              </div>
+            </div>
+
+            <div className="operator-details-grid operator-details-grid-open">
+              <section className="status-block">
+                <h3>WhatsApp</h3>
+                <dl className="definition-list compact">
+                  <div>
+                    <dt>Conta</dt>
+                    <dd>{whatsAppStatus?.account?.pushname || 'Nao autenticada'}</dd>
+                  </div>
+                  <div>
+                    <dt>Ultimo evento</dt>
+                    <dd>
+                      {whatsAppStatus?.lastEventAt
+                        ? formatTimestamp(whatsAppStatus.lastEventAt)
+                        : 'Sem eventos'}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>QR code</dt>
+                    <dd>{whatsAppStatus?.qrCodeDataUrl ? 'Disponivel' : 'Nao exibido'}</dd>
+                  </div>
+                </dl>
+                {whatsAppStatus?.qrCodeDataUrl ? (
+                  <img
+                    alt="QR code do WhatsApp"
+                    className="qr-image"
+                    src={whatsAppStatus.qrCodeDataUrl}
+                  />
+                ) : null}
+              </section>
+
+              <section className="status-block">
+                <h3>Transmissao</h3>
+                <dl className="definition-list compact">
+                  <div>
+                    <dt>Overlay (mensagens - local)</dt>
+                    <dd className="url-row">
+                      <span>{localOverlayMessageUrl || 'Carregando...'}</span>
+                      <button
+                        className="ghost-button ghost-button-compact"
+                        disabled={!localOverlayMessageUrl}
+                        onClick={() => void copyToClipboard(localOverlayMessageUrl)}
+                        type="button"
+                      >
+                        Copiar
+                      </button>
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Overlay (mensagens - rede)</dt>
+                    <dd className="url-row">
+                      <span>{networkOverlayMessageUrl || 'Indisponivel'}</span>
+                      <button
+                        className="ghost-button ghost-button-compact"
+                        disabled={!networkOverlayMessageUrl}
+                        onClick={() => void copyToClipboard(networkOverlayMessageUrl)}
+                        type="button"
+                      >
+                        Copiar
+                      </button>
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Overlay (enquete - local)</dt>
+                    <dd className="url-row">
+                      <span>{localOverlayPollUrl || 'Carregando...'}</span>
+                      <button
+                        className="ghost-button ghost-button-compact"
+                        disabled={!localOverlayPollUrl}
+                        onClick={() => void copyToClipboard(localOverlayPollUrl)}
+                        type="button"
+                      >
+                        Copiar
+                      </button>
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Overlay (enquete - rede)</dt>
+                    <dd className="url-row">
+                      <span>{networkOverlayPollUrl || 'Indisponivel'}</span>
+                      <button
+                        className="ghost-button ghost-button-compact"
+                        disabled={!networkOverlayPollUrl}
+                        onClick={() => void copyToClipboard(networkOverlayPollUrl)}
+                        type="button"
+                      >
+                        Copiar
+                      </button>
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Ultima checagem</dt>
+                    <dd>{formatLastCheck(backendHealth.lastCheckedAt)}</dd>
+                  </div>
+                  <div>
+                    <dt>Sistema</dt>
+                    <dd>{backendHealth.ok ? 'Online' : backendHealth.error}</dd>
+                  </div>
+                </dl>
+              </section>
+
+              <section className="status-block">
+                <h3>Recuperacao e limpeza</h3>
+                {cleanupError ? <p className="inline-error">{cleanupError}</p> : null}
+                {cleanupSuccess ? <p className="vote-match">{cleanupSuccess}</p> : null}
+                <dl className="definition-list compact">
+                  <div>
+                    <dt>Estado restaurado</dt>
+                    <dd>{backendStatus?.runtime?.restoredFromDisk ? 'Sim' : 'Nao'}</dd>
+                  </div>
+                  <div>
+                    <dt>Ultima persistencia</dt>
+                    <dd>
+                      {backendStatus?.runtime?.persistedAt
+                        ? formatTimestamp(backendStatus.runtime.persistedAt)
+                        : 'Sem persistencia anterior'}
+                    </dd>
+                  </div>
+                </dl>
+                <div className="form-actions">
+                  <button
+                    className="ghost-button ghost-button-danger"
+                    disabled={isCleaningRuntime}
+                    onClick={handleCleanupRuntime}
+                    type="button"
+                  >
+                    {isCleaningRuntime ? 'Limpando...' : 'Limpar fila e midias locais'}
+                  </button>
+                </div>
+              </section>
+
+              <section className="status-block">
+                <h3>Entrada manual de teste</h3>
+                <form className="message-form compact-form" onSubmit={handleSubmit}>
+                  <label className="field">
+                    <span>Autor</span>
+                    <input
+                      onChange={(event) => setFormState({ ...formState, author: event.target.value })}
+                      placeholder="Ex.: Maria Souza"
+                      type="text"
+                      value={formState.author}
+                    />
+                  </label>
+                  <label className="field">
+                    <span>Telefone</span>
+                    <input
+                      onChange={(event) => setFormState({ ...formState, phone: event.target.value })}
+                      placeholder="Ex.: 11999990000"
+                      type="text"
+                      value={formState.phone}
+                    />
+                  </label>
+                  <label className="field field-full">
+                    <span>Mensagem</span>
+                    <textarea
+                      onChange={(event) => setFormState({ ...formState, content: event.target.value })}
+                      placeholder="Use esta area somente para validar o fluxo local."
+                      rows={4}
+                      value={formState.content}
+                    />
+                  </label>
+                  {submissionError ? <p className="inline-error">{submissionError}</p> : null}
+                  <div className="form-actions">
+                    <button className="primary-button" disabled={isSubmitting} type="submit">
+                      {isSubmitting ? 'Adicionando...' : 'Adicionar a fila'}
+                    </button>
+                  </div>
+                </form>
+              </section>
+
+              <section className="status-block">
+                <h3>Aplicativo</h3>
+                <dl className="definition-list compact">
+                  <div>
+                    <dt>App</dt>
+                    <dd>{shellInfo?.appName || 'Carregando...'}</dd>
+                  </div>
+                  <div>
+                    <dt>Versao</dt>
+                    <dd>{shellInfo?.appVersion || 'Carregando...'}</dd>
+                  </div>
+                  <div>
+                    <dt>Plataforma</dt>
+                    <dd>{shellInfo?.platform || 'Carregando...'}</dd>
+                  </div>
+                  <div>
+                    <dt>Modo dev</dt>
+                    <dd>{formatBooleanLabel(Boolean(shellInfo?.isDev))}</dd>
+                  </div>
+                </dl>
+              </section>
+            </div>
+          </article>
+        </section>
+      ) : null}
     </main>
   )
 }

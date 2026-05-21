@@ -15,13 +15,23 @@
 
       <section class="live-layer" id="live-layer">
         <article class="live-card is-hidden" id="live-card">
-          <div class="live-card-header">
-            <p class="live-kicker">WhatsApp ao vivo</p>
-            <p class="live-author" id="live-author"></p>
+          <div class="live-header">
+            <div class="live-header-left">
+              <img class="live-avatar is-hidden" id="live-avatar" alt="" />
+              <p class="live-author" id="live-author"></p>
+            </div>
+            <p class="live-date" id="live-date"></p>
           </div>
 
-          <div class="live-media-region" id="live-media-region"></div>
-          <p class="live-message" id="live-message"></p>
+          <div class="live-body">
+            <div class="live-media-region" id="live-media-region"></div>
+            <p class="live-message" id="live-message"></p>
+          </div>
+
+          <div class="live-meta">
+            <span class="live-time" id="live-time"></span>
+            <span class="live-check" aria-hidden="true"></span>
+          </div>
         </article>
       </section>
 

@@ -4,7 +4,8 @@ import { electronAPI } from '@electron-toolkit/preload'
 const api = {
   system: {
     getConfig: () => ipcRenderer.invoke('system:get-config'),
-    getShellInfo: () => ipcRenderer.invoke('system:get-shell-info')
+    getShellInfo: () => ipcRenderer.invoke('system:get-shell-info'),
+    enableNetworkAccess: (payload) => ipcRenderer.invoke('system:enable-network-access', payload)
   },
   backend: {
     getHealth: () => ipcRenderer.invoke('backend:get-health'),
@@ -19,6 +20,9 @@ const api = {
   },
   overlay: {
     updateSettings: (payload) => ipcRenderer.invoke('overlay:update-settings', payload)
+  },
+  media: {
+    sendCommand: (payload) => ipcRenderer.invoke('media:send-command', payload)
   },
   whatsapp: {
     getStatus: () => ipcRenderer.invoke('whatsapp:get-status'),

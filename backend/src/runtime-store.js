@@ -1,10 +1,21 @@
-function createTextItem({ id, author, phone, content, receivedAt, source, status = 'pending', pollVote = null }) {
+function createTextItem({
+  id,
+  author,
+  phone,
+  content,
+  receivedAt,
+  source,
+  status = 'pending',
+  pollVote = null,
+  authorAvatarUrl = null
+}) {
   return {
     id,
     type: 'text',
     author,
     phone,
     content,
+    ...(authorAvatarUrl ? { authorAvatarUrl } : {}),
     receivedAt,
     source,
     status,
@@ -19,6 +30,7 @@ function createImageItem({
   content,
   receivedAt,
   source,
+  authorAvatarUrl = null,
   media,
   status = 'pending'
 }) {
@@ -28,6 +40,7 @@ function createImageItem({
     author,
     phone,
     content,
+    ...(authorAvatarUrl ? { authorAvatarUrl } : {}),
     receivedAt,
     source,
     media,
@@ -42,6 +55,7 @@ function createAudioItem({
   content,
   receivedAt,
   source,
+  authorAvatarUrl = null,
   media,
   status = 'pending'
 }) {
@@ -51,6 +65,7 @@ function createAudioItem({
     author,
     phone,
     content,
+    ...(authorAvatarUrl ? { authorAvatarUrl } : {}),
     receivedAt,
     source,
     media,
@@ -65,6 +80,7 @@ function createVideoItem({
   content,
   receivedAt,
   source,
+  authorAvatarUrl = null,
   media,
   status = 'pending'
 }) {
@@ -74,6 +90,7 @@ function createVideoItem({
     author,
     phone,
     content,
+    ...(authorAvatarUrl ? { authorAvatarUrl } : {}),
     receivedAt,
     source,
     media,
@@ -151,6 +168,62 @@ function clonePoll(poll) {
   };
 }
 
+function isTransportableMediaType(type) {
+  return type === 'audio' || type === 'video';
+}
+
+function createMediaTransportForItem(item, previousTransport = null) {
+  if (!item || !isTransportableMediaType(item.type)) {
+    return null;
+  }
+
+  return {
+    itemId: item.id,
+    kind: item.type,
+    status: 'cued',
+    currentTime: 0,
+    duration: null,
+    commandVersion: (previousTransport?.commandVersion || 0) + 1,
+    lastCommand: {
+      type: 'cue',
+      issuedAt: new Date().toISOString()
+    },
+    error: null,
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function cloneMediaTransport(mediaTransport) {
+  if (!mediaTransport) {
+    return null;
+  }
+
+  return {
+    itemId: mediaTransport.itemId || null,
+    kind: mediaTransport.kind || null,
+    status: mediaTransport.status || 'idle',
+    currentTime: Number.isFinite(mediaTransport.currentTime) ? mediaTransport.currentTime : 0,
+    duration: Number.isFinite(mediaTransport.duration) ? mediaTransport.duration : null,
+    commandVersion: Number.isInteger(mediaTransport.commandVersion)
+      ? mediaTransport.commandVersion
+      : 0,
+     lastCommand: mediaTransport.lastCommand
+      ? {
+          type: mediaTransport.lastCommand.type || null,
+          deltaSeconds: Number.isFinite(mediaTransport.lastCommand.deltaSeconds)
+            ? mediaTransport.lastCommand.deltaSeconds
+            : undefined,
+          targetTime: Number.isFinite(mediaTransport.lastCommand.targetTime)
+            ? mediaTransport.lastCommand.targetTime
+            : undefined,
+          issuedAt: mediaTransport.lastCommand.issuedAt || null
+        }
+      : null,
+    error: mediaTransport.error || null,
+    updatedAt: mediaTransport.updatedAt || null
+  };
+}
+
 function createRestoredState(initialState) {
   return {
     sequence: Number.isInteger(initialState?.sequence) ? initialState.sequence : 0,
@@ -160,6 +233,7 @@ function createRestoredState(initialState) {
       : [],
     liveItemId: initialState?.liveItemId || null,
     activePoll: clonePoll(initialState?.activePoll),
+    mediaTransport: cloneMediaTransport(initialState?.mediaTransport),
     pollVotesByPhoneEntries: Array.isArray(initialState?.pollVotesByPhoneEntries)
       ? initialState.pollVotesByPhoneEntries.filter(
           (entry) => Array.isArray(entry) && entry.length === 2 && entry[0] && entry[1]
@@ -178,9 +252,16 @@ export function createRuntimeStore({ initialState = null, onChange = null } = {}
     moderationQueue: restoredState.moderationQueue,
     liveItem:
       restoredState.moderationQueue.find((item) => item.id === restoredState.liveItemId) || null,
-    activePoll: restoredState.activePoll
+    activePoll: restoredState.activePoll,
+    mediaTransport: restoredState.mediaTransport
   };
   const pollVotesByPhone = new Map(restoredState.pollVotesByPhoneEntries);
+
+  if (!state.liveItem || !isTransportableMediaType(state.liveItem.type)) {
+    state.mediaTransport = null;
+  } else if (state.mediaTransport?.itemId !== state.liveItem.id) {
+    state.mediaTransport = createMediaTransportForItem(state.liveItem, state.mediaTransport);
+  }
 
   function nextId() {
     sequence += 1;
@@ -207,6 +288,7 @@ export function createRuntimeStore({ initialState = null, onChange = null } = {}
       moderationQueue: state.moderationQueue.map((item) => cloneItem(item)),
       liveItemId: state.liveItem?.id || null,
       activePoll: serializePoll(state.activePoll),
+      mediaTransport: cloneMediaTransport(state.mediaTransport),
       pollVotesByPhoneEntries: Array.from(pollVotesByPhone.entries())
     };
   }
@@ -274,6 +356,7 @@ export function createRuntimeStore({ initialState = null, onChange = null } = {}
     return {
       moderationQueue: state.moderationQueue.map((item) => cloneItem(item)),
       liveItem: cloneItem(state.liveItem),
+      mediaTransport: cloneMediaTransport(state.mediaTransport),
       activePoll: serializePoll(state.activePoll),
       counts: {
         pending: state.moderationQueue.filter((item) => item.status === 'pending').length,
@@ -290,6 +373,80 @@ export function createRuntimeStore({ initialState = null, onChange = null } = {}
     return cloneItem(item);
   }
 
+  function clearMediaTransport() {
+    state.mediaTransport = null;
+  }
+
+  function issueMediaCommand(commandType, payload = {}) {
+    if (!state.liveItem || !isTransportableMediaType(state.liveItem.type)) {
+      return null;
+    }
+
+    if (!state.mediaTransport || state.mediaTransport.itemId !== state.liveItem.id) {
+      state.mediaTransport = createMediaTransportForItem(state.liveItem, state.mediaTransport);
+    }
+
+    const currentTime = Number.isFinite(state.mediaTransport.currentTime)
+      ? state.mediaTransport.currentTime
+      : 0;
+    const duration = Number.isFinite(state.mediaTransport.duration)
+      ? state.mediaTransport.duration
+      : null;
+    const nextCommandVersion = (state.mediaTransport.commandVersion || 0) + 1;
+    const updatedAt = new Date().toISOString();
+    const nextTransport = {
+      ...state.mediaTransport,
+      itemId: state.liveItem.id,
+      kind: state.liveItem.type,
+      commandVersion: nextCommandVersion,
+      lastCommand: {
+        type: commandType,
+        ...(Number.isFinite(payload.deltaSeconds)
+          ? { deltaSeconds: payload.deltaSeconds }
+          : {}),
+        ...(Number.isFinite(payload.targetTime)
+          ? { targetTime: payload.targetTime }
+          : {}),
+        issuedAt: updatedAt
+      },
+      error: null,
+      updatedAt
+    };
+
+    if (commandType === 'play') {
+      nextTransport.status = 'playing';
+    }
+
+    if (commandType === 'pause') {
+      nextTransport.status = 'paused';
+    }
+
+    if (commandType === 'stop') {
+      nextTransport.status = 'stopped';
+      nextTransport.currentTime = 0;
+    }
+
+    if (commandType === 'restart') {
+      nextTransport.status = 'playing';
+      nextTransport.currentTime = 0;
+    }
+
+    if (commandType === 'seek_relative') {
+      const unclampedTargetTime = currentTime + payload.deltaSeconds;
+      const maxDuration = Number.isFinite(duration) ? duration : Number.POSITIVE_INFINITY;
+      nextTransport.currentTime = Math.max(0, Math.min(maxDuration, unclampedTargetTime));
+    }
+
+    if (commandType === 'seek_to') {
+      const maxDuration = Number.isFinite(duration) ? duration : Number.POSITIVE_INFINITY;
+      nextTransport.currentTime = Math.max(0, Math.min(maxDuration, payload.targetTime));
+    }
+
+    state.mediaTransport = nextTransport;
+    emitChange();
+    return cloneMediaTransport(state.mediaTransport);
+  }
+
   return {
     getSnapshot() {
       return serializeState();
@@ -297,13 +454,14 @@ export function createRuntimeStore({ initialState = null, onChange = null } = {}
 
     getPersistenceSnapshot,
 
-    enqueueTextMessage({ author, phone, content, source = 'manual' }) {
+    enqueueTextMessage({ author, phone, content, source = 'manual', authorAvatarUrl = null }) {
       return enqueueModerationItem(() => {
         const item = createTextItem({
           id: nextId(),
           author: author?.trim() || 'Anonimo',
           phone: phone?.trim() || 'Nao informado',
           content: content?.trim() || '',
+          authorAvatarUrl: authorAvatarUrl?.trim() || null,
           receivedAt: new Date().toISOString(),
           source
         });
@@ -317,13 +475,14 @@ export function createRuntimeStore({ initialState = null, onChange = null } = {}
       });
     },
 
-    enqueueImageMessage({ author, phone, content, source = 'whatsapp', media }) {
+    enqueueImageMessage({ author, phone, content, source = 'whatsapp', media, authorAvatarUrl = null }) {
       return enqueueModerationItem(() =>
         createImageItem({
           id: nextId(),
           author: author?.trim() || 'Anonimo',
           phone: phone?.trim() || 'Nao informado',
           content: content?.trim() || '',
+          authorAvatarUrl: authorAvatarUrl?.trim() || null,
           receivedAt: new Date().toISOString(),
           source,
           media
@@ -331,13 +490,14 @@ export function createRuntimeStore({ initialState = null, onChange = null } = {}
       );
     },
 
-    enqueueAudioMessage({ author, phone, content, source = 'whatsapp', media }) {
+    enqueueAudioMessage({ author, phone, content, source = 'whatsapp', media, authorAvatarUrl = null }) {
       return enqueueModerationItem(() =>
         createAudioItem({
           id: nextId(),
           author: author?.trim() || 'Anonimo',
           phone: phone?.trim() || 'Nao informado',
           content: content?.trim() || '',
+          authorAvatarUrl: authorAvatarUrl?.trim() || null,
           receivedAt: new Date().toISOString(),
           source,
           media
@@ -345,13 +505,14 @@ export function createRuntimeStore({ initialState = null, onChange = null } = {}
       );
     },
 
-    enqueueVideoMessage({ author, phone, content, source = 'whatsapp', media }) {
+    enqueueVideoMessage({ author, phone, content, source = 'whatsapp', media, authorAvatarUrl = null }) {
       return enqueueModerationItem(() =>
         createVideoItem({
           id: nextId(),
           author: author?.trim() || 'Anonimo',
           phone: phone?.trim() || 'Nao informado',
           content: content?.trim() || '',
+          authorAvatarUrl: authorAvatarUrl?.trim() || null,
           receivedAt: new Date().toISOString(),
           source,
           media
@@ -411,6 +572,7 @@ export function createRuntimeStore({ initialState = null, onChange = null } = {}
 
       if (state.liveItem?.id === item.id) {
         state.liveItem = null;
+        clearMediaTransport();
       }
 
       emitChange();
@@ -434,6 +596,7 @@ export function createRuntimeStore({ initialState = null, onChange = null } = {}
 
       item.status = 'on_air';
       state.liveItem = item;
+      state.mediaTransport = createMediaTransportForItem(item, state.mediaTransport);
       emitChange();
       return cloneItem(item);
     },
@@ -448,14 +611,51 @@ export function createRuntimeStore({ initialState = null, onChange = null } = {}
       }
 
       state.liveItem = null;
+      clearMediaTransport();
       emitChange();
       return serializeState();
+    },
+
+    getMediaTransport() {
+      return cloneMediaTransport(state.mediaTransport);
+    },
+
+    issueMediaCommand(commandType, payload = {}) {
+      return issueMediaCommand(commandType, payload);
+    },
+
+    updateMediaTelemetry({ itemId, status, currentTime, duration, error = null }) {
+      if (!state.mediaTransport || !state.liveItem) {
+        return null;
+      }
+
+      if (state.mediaTransport.itemId !== itemId || state.liveItem.id !== itemId) {
+        return null;
+      }
+
+      if (typeof status === 'string' && status.trim()) {
+        state.mediaTransport.status = status;
+      }
+
+      if (Number.isFinite(currentTime)) {
+        state.mediaTransport.currentTime = currentTime;
+      }
+
+      if (Number.isFinite(duration)) {
+        state.mediaTransport.duration = duration;
+      }
+
+      state.mediaTransport.error = error || null;
+      state.mediaTransport.updatedAt = new Date().toISOString();
+      emitChange();
+      return cloneMediaTransport(state.mediaTransport);
     },
 
     clearOperationalState() {
       state.moderationQueue = [];
       state.liveItem = null;
       state.activePoll = null;
+      clearMediaTransport();
       pollVotesByPhone.clear();
       emitChange();
       return serializeState();

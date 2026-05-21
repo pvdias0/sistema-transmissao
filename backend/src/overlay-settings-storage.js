@@ -5,11 +5,26 @@ const runtimeDirectory = join(process.cwd(), 'runtime');
 const settingsFilePath = join(runtimeDirectory, 'overlay-settings.json');
 
 const DEFAULT_SETTINGS = {
+  canvas: {
+    enabled: false,
+    backgroundColor: '#0e171c',
+    backgroundImageUrl: ''
+  },
   message: {
-    fontSize: 32
+    fontSize: 32,
+    fontFamily: 'Segoe UI',
+    textColor: '#f7fbfb',
+    accentColor: '#8ef2cf',
+    backgroundColor: '#101a1f',
+    backgroundImageUrl: ''
   },
   poll: {
-    fontSize: 24
+    fontSize: 24,
+    fontFamily: 'Segoe UI',
+    textColor: '#f7fbfb',
+    accentColor: '#8ef2cf',
+    backgroundColor: '#0e1820',
+    backgroundImageUrl: ''
   }
 };
 
@@ -27,13 +42,84 @@ function normalizeFontSize(value, fallback) {
   return clamp(parsed, 18, 56);
 }
 
+function normalizeFontFamily(value, fallback) {
+  const normalized = String(value || '').trim();
+
+  if (!normalized) {
+    return fallback;
+  }
+
+  return normalized.slice(0, 80);
+}
+
+function normalizeColor(value, fallback) {
+  const normalized = String(value || '').trim();
+
+  if (/^#[0-9a-f]{6}$/i.test(normalized)) {
+    return normalized;
+  }
+
+  return fallback;
+}
+
+function normalizeBackgroundImageUrl(value) {
+  const normalized = String(value || '').trim();
+  return normalized.slice(0, 500);
+}
+
+function normalizeBoolean(value, fallback) {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+
+  if (value === 'true') {
+    return true;
+  }
+
+  if (value === 'false') {
+    return false;
+  }
+
+  return fallback;
+}
+
 function normalizeSettings(input = {}) {
   return {
+    canvas: {
+      enabled: normalizeBoolean(input?.canvas?.enabled, DEFAULT_SETTINGS.canvas.enabled),
+      backgroundColor: normalizeColor(
+        input?.canvas?.backgroundColor,
+        DEFAULT_SETTINGS.canvas.backgroundColor
+      ),
+      backgroundImageUrl: normalizeBackgroundImageUrl(input?.canvas?.backgroundImageUrl)
+    },
     message: {
-      fontSize: normalizeFontSize(input?.message?.fontSize, DEFAULT_SETTINGS.message.fontSize)
+      fontSize: normalizeFontSize(input?.message?.fontSize, DEFAULT_SETTINGS.message.fontSize),
+      fontFamily: normalizeFontFamily(
+        input?.message?.fontFamily,
+        DEFAULT_SETTINGS.message.fontFamily
+      ),
+      textColor: normalizeColor(input?.message?.textColor, DEFAULT_SETTINGS.message.textColor),
+      accentColor: normalizeColor(
+        input?.message?.accentColor,
+        DEFAULT_SETTINGS.message.accentColor
+      ),
+      backgroundColor: normalizeColor(
+        input?.message?.backgroundColor,
+        DEFAULT_SETTINGS.message.backgroundColor
+      ),
+      backgroundImageUrl: normalizeBackgroundImageUrl(input?.message?.backgroundImageUrl)
     },
     poll: {
-      fontSize: normalizeFontSize(input?.poll?.fontSize, DEFAULT_SETTINGS.poll.fontSize)
+      fontSize: normalizeFontSize(input?.poll?.fontSize, DEFAULT_SETTINGS.poll.fontSize),
+      fontFamily: normalizeFontFamily(input?.poll?.fontFamily, DEFAULT_SETTINGS.poll.fontFamily),
+      textColor: normalizeColor(input?.poll?.textColor, DEFAULT_SETTINGS.poll.textColor),
+      accentColor: normalizeColor(input?.poll?.accentColor, DEFAULT_SETTINGS.poll.accentColor),
+      backgroundColor: normalizeColor(
+        input?.poll?.backgroundColor,
+        DEFAULT_SETTINGS.poll.backgroundColor
+      ),
+      backgroundImageUrl: normalizeBackgroundImageUrl(input?.poll?.backgroundImageUrl)
     }
   };
 }
@@ -95,6 +181,10 @@ export function createOverlaySettingsStorage() {
       const nextSettings = normalizeSettings({
         ...currentSettings,
         ...partialSettings,
+        canvas: {
+          ...currentSettings.canvas,
+          ...partialSettings.canvas
+        },
         message: {
           ...currentSettings.message,
           ...partialSettings.message
