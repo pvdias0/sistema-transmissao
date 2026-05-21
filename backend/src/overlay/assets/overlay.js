@@ -36,12 +36,15 @@ const DEFAULT_AVATAR_SVG = `
 const DEFAULT_AVATAR_URL = `data:image/svg+xml;utf8,${encodeURIComponent(DEFAULT_AVATAR_SVG)}`;
 
 const liveCard = document.getElementById('live-card');
+const liveHeader = document.querySelector('.live-header');
 const liveAuthor = document.getElementById('live-author');
 const liveAvatar = document.getElementById('live-avatar');
 const liveDate = document.getElementById('live-date');
 const liveMessage = document.getElementById('live-message');
 const liveMediaRegion = document.getElementById('live-media-region');
 const liveTime = document.getElementById('live-time');
+const liveCheck = document.querySelector('.live-check');
+const liveMeta = document.querySelector('.live-meta');
 const debugEmptyState = document.getElementById('debug-empty-state');
 const debugEmptyText = document.querySelector('#debug-empty-state .debug-empty-text');
 const pollLayer = document.getElementById('poll-layer');
@@ -53,10 +56,15 @@ let lastLiveItemId = null;
 let lastPollId = null;
 let currentOverlaySettings = null;
 let currentLiveItem = null;
+let currentActivePoll = null;
 let currentMediaElement = null;
 let currentMediaTransport = null;
 let lastAppliedCommandVersion = 0;
 let lastTelemetrySentAt = 0;
+let currentMessageBoxMode = 'auto';
+let currentPollBoxMode = 'auto';
+let lastMessageManualSignature = '';
+let lastPollManualSignature = '';
 
 if (isDebugMode) {
   document.body.classList.add('debug-mode');
@@ -157,6 +165,10 @@ function applyOverlaySettings(settings) {
   const canvasBackgroundColor = settings?.canvas?.backgroundColor ?? '#0e171c';
   const messageFontSize = settings?.message?.fontSize ?? 32;
   const pollFontSize = settings?.poll?.fontSize ?? 24;
+  const messageBoxWidth = settings?.message?.boxWidth ?? 1080;
+  const messageBoxHeight = settings?.message?.boxHeight ?? 560;
+  const pollBoxWidth = settings?.poll?.boxWidth ?? 680;
+  const pollBoxHeight = settings?.poll?.boxHeight ?? 360;
   const messageFontFamily = settings?.message?.fontFamily ?? 'Segoe UI';
   const pollFontFamily = settings?.poll?.fontFamily ?? 'Segoe UI';
   const messageTextColor = settings?.message?.textColor ?? '#f7fbfb';
@@ -178,6 +190,10 @@ function applyOverlaySettings(settings) {
   document.documentElement.style.setProperty('--message-font-size', `${messageFontSize}px`);
   document.documentElement.style.setProperty('--message-font-size-effective', `${messageFontSize}px`);
   document.documentElement.style.setProperty('--poll-font-size', `${pollFontSize}px`);
+  document.documentElement.style.setProperty('--message-card-width', `${messageBoxWidth}px`);
+  document.documentElement.style.setProperty('--message-card-height', `${messageBoxHeight}px`);
+  document.documentElement.style.setProperty('--poll-card-width', `${pollBoxWidth}px`);
+  document.documentElement.style.setProperty('--poll-card-height', `${pollBoxHeight}px`);
   document.documentElement.style.setProperty('--message-font-family', `"${messageFontFamily}"`);
   document.documentElement.style.setProperty('--poll-font-family', `"${pollFontFamily}"`);
   document.documentElement.style.setProperty('--message-text-color', messageTextColor);
@@ -196,16 +212,180 @@ function applyOverlaySettings(settings) {
   );
 }
 
+function getBoxSignature(target) {
+  const boxWidth = currentOverlaySettings?.[target]?.boxWidth ?? 0;
+  const boxHeight = currentOverlaySettings?.[target]?.boxHeight ?? 0;
+  return `${boxWidth}x${boxHeight}`;
+}
+
+function clampDimension(value, min, max) {
+  return Math.min(Math.max(Math.round(value), min), max);
+}
+
+function applyMessageBoxDimensions(width, height) {
+  document.documentElement.style.setProperty('--message-card-width', `${width}px`);
+  document.documentElement.style.setProperty('--message-card-height', `${height}px`);
+}
+
+function applyPollBoxDimensions(width, height) {
+  document.documentElement.style.setProperty('--poll-card-width', `${width}px`);
+  document.documentElement.style.setProperty('--poll-card-height', `${height}px`);
+}
+
+function computeAutoMessageBoxDimensions(liveItem) {
+  const viewportWidth = Math.max(360, window.innerWidth - 96);
+  const viewportHeight = Math.max(220, window.innerHeight - 160);
+  const content = liveItem?.content?.trim() || '';
+  const lineBreakCount = (content.match(/\n/g) || []).length;
+  const contentLength = content.length;
+  const estimatedLineCount = Math.max(1, Math.ceil(contentLength / 34) + lineBreakCount);
+
+  let width = 700;
+  let height = 250;
+
+  if (liveItem?.type === 'image') {
+    width = 780;
+    height = 470;
+  } else if (liveItem?.type === 'video') {
+    width = 820;
+    height = 520;
+  } else if (liveItem?.type === 'audio') {
+    width = 760;
+    height = 260;
+  }
+
+  if (content) {
+    width += Math.min(220, contentLength * 0.9 + lineBreakCount * 26);
+    height += Math.min(240, estimatedLineCount * 22);
+  }
+
+  return {
+    width: clampDimension(width, 320, viewportWidth),
+    height: clampDimension(height, 180, viewportHeight)
+  };
+}
+
+function computeAutoPollBoxDimensions(activePoll) {
+  const viewportWidth = Math.max(360, window.innerWidth - 96);
+  const viewportHeight = Math.max(220, window.innerHeight - 160);
+  const title = activePoll?.title?.trim() || '';
+  const titleLength = title.length;
+  const optionCount = Array.isArray(activePoll?.options) ? activePoll.options.length : 0;
+  const longestOption = Math.max(
+    0,
+    ...(activePoll?.options || []).map((option) => String(option?.label || '').length)
+  );
+
+  const titleLineEstimate = Math.max(1, Math.ceil(titleLength / 28));
+  const width = 560 + Math.min(240, longestOption * 6 + titleLength * 1.1);
+  const height = 170 + optionCount * 68 + titleLineEstimate * 26;
+
+  return {
+    width: clampDimension(width, 360, viewportWidth),
+    height: clampDimension(height, 220, viewportHeight)
+  };
+}
+
+function syncMessageBoxMode(liveItem, isNewLiveItem) {
+  const manualSignature = getBoxSignature('message');
+
+  if (!liveItem) {
+    currentMessageBoxMode = 'auto';
+    lastMessageManualSignature = manualSignature;
+    applyMessageBoxDimensions(
+      currentOverlaySettings?.message?.boxWidth ?? 1080,
+      currentOverlaySettings?.message?.boxHeight ?? 560
+    );
+    return;
+  }
+
+  if (isNewLiveItem) {
+    currentMessageBoxMode = 'auto';
+    lastMessageManualSignature = manualSignature;
+  } else if (manualSignature !== lastMessageManualSignature) {
+    currentMessageBoxMode = 'manual';
+    lastMessageManualSignature = manualSignature;
+  }
+
+  if (currentMessageBoxMode === 'manual') {
+    applyMessageBoxDimensions(
+      currentOverlaySettings?.message?.boxWidth ?? 1080,
+      currentOverlaySettings?.message?.boxHeight ?? 560
+    );
+    return;
+  }
+
+  const autoDimensions = computeAutoMessageBoxDimensions(liveItem);
+  applyMessageBoxDimensions(autoDimensions.width, autoDimensions.height);
+}
+
+function syncPollBoxMode(activePoll) {
+  const manualSignature = getBoxSignature('poll');
+  const isNewPoll = activePoll?.id && activePoll.id !== lastPollId;
+
+  if (!activePoll) {
+    currentPollBoxMode = 'auto';
+    lastPollManualSignature = manualSignature;
+    applyPollBoxDimensions(
+      currentOverlaySettings?.poll?.boxWidth ?? 680,
+      currentOverlaySettings?.poll?.boxHeight ?? 360
+    );
+    return;
+  }
+
+  if (isNewPoll) {
+    currentPollBoxMode = 'auto';
+    lastPollManualSignature = manualSignature;
+  } else if (manualSignature !== lastPollManualSignature) {
+    currentPollBoxMode = 'manual';
+    lastPollManualSignature = manualSignature;
+  }
+
+  if (currentPollBoxMode === 'manual') {
+    applyPollBoxDimensions(
+      currentOverlaySettings?.poll?.boxWidth ?? 680,
+      currentOverlaySettings?.poll?.boxHeight ?? 360
+    );
+    return;
+  }
+
+  const autoDimensions = computeAutoPollBoxDimensions(activePoll);
+  applyPollBoxDimensions(autoDimensions.width, autoDimensions.height);
+}
+
 function getBaseMessageFontSize() {
   return currentOverlaySettings?.message?.fontSize ?? 32;
 }
 
 function resetLiveMessageLayout() {
-  liveCard.classList.remove('is-expanded', 'is-condensed');
+  liveCard.classList.remove('is-expanded', 'is-condensed', 'is-tight');
+  delete liveCard.dataset.liveType;
   document.documentElement.style.setProperty(
     '--message-font-size-effective',
     `${getBaseMessageFontSize()}px`
   );
+  document.documentElement.style.setProperty('--message-media-max-height', '52vh');
+}
+
+function updateMediaHeightBudget() {
+  if (!liveCard) {
+    return;
+  }
+
+  const hasVisibleMedia = !liveMediaRegion.classList.contains('is-hidden');
+  if (!hasVisibleMedia) {
+    document.documentElement.style.setProperty('--message-media-max-height', '52vh');
+    return;
+  }
+
+  const headerHeight = liveHeader?.offsetHeight || 0;
+  const metaHeight = liveMeta?.offsetHeight || 0;
+  const messageHeight = liveMessage.classList.contains('is-hidden')
+    ? 0
+    : Math.min(liveMessage.scrollHeight, Math.round(liveCard.clientHeight * 0.34));
+  const reservedChrome = headerHeight + metaHeight + messageHeight + 84;
+  const availableHeight = Math.max(110, liveCard.clientHeight - reservedChrome);
+  document.documentElement.style.setProperty('--message-media-max-height', `${availableHeight}px`);
 }
 
 function renderLiveAvatar(liveItem) {
@@ -235,7 +415,7 @@ function renderLiveAvatar(liveItem) {
 }
 
 function renderLiveTimestamp(liveItem) {
-  if (!liveDate || !liveTime) {
+  if (!liveDate || !liveTime || !liveCheck) {
     return;
   }
 
@@ -245,28 +425,39 @@ function renderLiveTimestamp(liveItem) {
 
   liveDate.textContent = dateLabel;
   liveTime.textContent = timeLabel;
+  liveCheck.textContent = timeLabel ? '\u2713\u2713' : '';
 
   liveDate.classList.toggle('is-hidden', !dateLabel);
   liveTime.classList.toggle('is-hidden', !timeLabel);
+  liveCheck.classList.toggle('is-hidden', !timeLabel);
 }
 
 function fitLiveMessageLayout(liveItem) {
   resetLiveMessageLayout();
 
-  if (!liveItem?.content) {
+  if (!liveItem) {
     return;
   }
 
-  const lineBreakCount = (liveItem.content.match(/\n/g) || []).length;
-  const contentLength = liveItem.content.trim().length;
-  const shouldExpandEarly = contentLength > 210 || lineBreakCount >= 2;
-  const minimumFontSize = 18;
+  const content = liveItem.content?.trim() || '';
+  const hasMedia =
+    liveItem.type === 'image' || liveItem.type === 'audio' || liveItem.type === 'video';
+  const lineBreakCount = (content.match(/\n/g) || []).length;
+  const contentLength = content.length;
+  const shouldExpandEarly = contentLength > 210 || lineBreakCount >= 2 || hasMedia;
+  const isTightCard = liveCard.clientWidth < 520 || liveCard.clientHeight < 360;
+  const minimumFontSize = hasMedia ? 12 : 14;
+
+  if (isTightCard) {
+    liveCard.classList.add('is-tight');
+  }
 
   if (shouldExpandEarly) {
     liveCard.classList.add('is-expanded');
   }
 
   let effectiveFontSize = getBaseMessageFontSize();
+  updateMediaHeightBudget();
 
   while (liveCard.scrollHeight > liveCard.clientHeight && effectiveFontSize > minimumFontSize) {
     effectiveFontSize -= 2;
@@ -274,6 +465,7 @@ function fitLiveMessageLayout(liveItem) {
       '--message-font-size-effective',
       `${effectiveFontSize}px`
     );
+    updateMediaHeightBudget();
   }
 
   if (
@@ -289,11 +481,13 @@ function fitLiveMessageLayout(liveItem) {
         '--message-font-size-effective',
         `${effectiveFontSize}px`
       );
+      updateMediaHeightBudget();
     }
   }
 
   if (liveCard.scrollHeight > liveCard.clientHeight) {
     liveCard.classList.add('is-condensed');
+    updateMediaHeightBudget();
 
     while (liveCard.scrollHeight > liveCard.clientHeight && effectiveFontSize > minimumFontSize) {
       effectiveFontSize -= 1;
@@ -301,6 +495,7 @@ function fitLiveMessageLayout(liveItem) {
         '--message-font-size-effective',
         `${effectiveFontSize}px`
       );
+      updateMediaHeightBudget();
     }
   }
 }
@@ -507,11 +702,24 @@ function createVideoShell(src) {
 
   const durationLabel = document.createElement('span');
   durationLabel.className = 'video-duration';
-  durationLabel.textContent = '0:00';
+  durationLabel.textContent = '\u25B6 0:00';
+
+  function syncPlaybackVisualState() {
+    const isPlaying = !video.paused && !video.ended;
+    shell.classList.toggle('is-playing', isPlaying);
+    shell.classList.toggle('is-paused', video.paused && !video.ended && video.currentTime > 0);
+    shell.classList.toggle('is-ended', video.ended);
+  }
 
   video.addEventListener('loadedmetadata', () => {
-    durationLabel.textContent = formatDuration(video.duration);
+    durationLabel.textContent = `\u25B6 ${formatDuration(video.duration)}`;
+    syncPlaybackVisualState();
   });
+
+  video.addEventListener('play', syncPlaybackVisualState);
+  video.addEventListener('pause', syncPlaybackVisualState);
+  video.addEventListener('ended', syncPlaybackVisualState);
+  video.addEventListener('seeking', syncPlaybackVisualState);
 
   shell.appendChild(video);
   shell.appendChild(playBadge);
@@ -551,7 +759,11 @@ function renderLiveItem(liveItem) {
     return;
   }
 
+  const isNewLiveItem = liveItem.id !== lastLiveItemId;
+  syncMessageBoxMode(liveItem, isNewLiveItem);
+
   liveCard.classList.remove('is-hidden');
+  liveCard.dataset.liveType = liveItem.type || 'text';
   liveAuthor.textContent = `${liveItem.author || 'Anonimo'}`;
   renderLiveAvatar(liveItem);
   renderLiveTimestamp(liveItem);
@@ -565,7 +777,7 @@ function renderLiveItem(liveItem) {
     liveMessage.classList.add('is-hidden');
   }
 
-  if (liveItem.id !== lastLiveItemId) {
+  if (isNewLiveItem) {
     clearChildren(liveMediaRegion);
     liveMediaRegion.classList.add('is-hidden');
     currentMediaElement = null;
@@ -711,6 +923,9 @@ async function renderMediaTransport(mediaTransport) {
 }
 
 function renderPoll(activePoll) {
+  currentActivePoll = activePoll || null;
+  syncPollBoxMode(activePoll || null);
+
   if (!activePoll) {
     pollLayer.classList.add('is-hidden');
     pollTitle.textContent = '';
@@ -734,6 +949,7 @@ function renderPoll(activePoll) {
   for (const option of activePoll.options) {
     const optionNode = document.createElement('article');
     optionNode.className = 'poll-option';
+    optionNode.style.backgroundColor = option.color || '#8ef2cf';
 
     const header = document.createElement('div');
     header.className = 'poll-option-header';
@@ -753,6 +969,7 @@ function renderPoll(activePoll) {
     const fill = document.createElement('div');
     fill.className = 'poll-fill';
     fill.style.width = `${Math.max(6, (option.votes / maxVotes) * 100)}%`;
+    fill.style.background = '#ffffff';
 
     track.appendChild(fill);
     optionNode.appendChild(header);
@@ -831,8 +1048,17 @@ window.setInterval(() => {
 
 window.addEventListener('resize', () => {
   if (!currentLiveItem) {
+    syncPollBoxMode(currentActivePoll);
     return;
   }
 
+  if (currentMessageBoxMode === 'auto') {
+    syncMessageBoxMode(currentLiveItem, false);
+  }
+
   fitLiveMessageLayout(currentLiveItem);
+
+  if (currentPollBoxMode === 'auto') {
+    syncPollBoxMode(currentActivePoll);
+  }
 });

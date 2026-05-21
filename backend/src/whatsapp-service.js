@@ -232,6 +232,19 @@ export function createWhatsAppService({ store, mediaStorage }) {
     );
   }
 
+  async function clearSavedSession() {
+    try {
+      await rm(getSessionDirectory(), {
+        force: true,
+        recursive: true
+      });
+    } catch (error) {
+      if (process.env.APP_ENV !== 'production') {
+        console.warn('[whatsapp] Falha ao limpar sessao autenticada:', error);
+      }
+    }
+  }
+
   async function findWindowsSessionBrowserProcessIds() {
     if (process.platform !== 'win32') {
       return [];
@@ -590,6 +603,33 @@ export function createWhatsAppService({ store, mediaStorage }) {
       await destroyClientInstance();
       await terminateSessionBrowserProcesses();
       await clearSessionRuntimeArtifacts();
+
+      markState('idle', {
+        qrCodeDataUrl: null,
+        lastError: null,
+        account: null
+      });
+
+      return getSnapshot();
+    },
+
+    async logout() {
+      isInitializing = false;
+
+      if (client && typeof client.logout === 'function') {
+        try {
+          await client.logout();
+        } catch (error) {
+          if (process.env.APP_ENV !== 'production') {
+            console.warn('[whatsapp] Falha ao executar logout da sessao:', error);
+          }
+        }
+      }
+
+      await destroyClientInstance();
+      await terminateSessionBrowserProcesses();
+      await clearSessionRuntimeArtifacts();
+      await clearSavedSession();
 
       markState('idle', {
         qrCodeDataUrl: null,

@@ -106,7 +106,17 @@ function normalizeVoteText(value) {
     .toLowerCase();
 }
 
-function buildOptionAliases(label, index) {
+function normalizeOptionColor(value, fallback = '#8ef2cf') {
+  const normalized = String(value || '').trim();
+
+  if (/^#[0-9a-f]{6}$/i.test(normalized)) {
+    return normalized;
+  }
+
+  return fallback;
+}
+
+function buildOptionAliases(label, index, extraAliases = []) {
   const aliases = new Set();
   const normalizedLabel = normalizeVoteText(label);
   const letter = String.fromCharCode(65 + index);
@@ -117,6 +127,14 @@ function buildOptionAliases(label, index) {
 
   if (normalizedLabel) {
     aliases.add(normalizedLabel);
+  }
+
+  for (const alias of extraAliases) {
+    const normalizedAlias = normalizeVoteText(alias);
+
+    if (normalizedAlias) {
+      aliases.add(normalizedAlias);
+    }
   }
 
   return Array.from(aliases);
@@ -161,6 +179,7 @@ function clonePoll(poll) {
       ? poll.options.map((option) => ({
           id: option.id,
           label: option.label,
+          color: normalizeOptionColor(option.color),
           aliases: Array.isArray(option.aliases) ? [...option.aliases] : [],
           votes: option.votes || 0
         }))
@@ -529,10 +548,11 @@ export function createRuntimeStore({ initialState = null, onChange = null } = {}
         status: 'active',
         createdAt: new Date().toISOString(),
         totalVoters: 0,
-        options: options.map((label, index) => ({
+        options: options.map((option, index) => ({
           id: `option-${index + 1}`,
-          label,
-          aliases: buildOptionAliases(label, index),
+          label: option.label,
+          color: normalizeOptionColor(option.color),
+          aliases: buildOptionAliases(option.label, index, option.aliases),
           votes: 0
         }))
       };

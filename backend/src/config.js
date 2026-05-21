@@ -18,6 +18,14 @@ export const backendConfig = {
   port: parsePort(process.env.PORT)
 };
 
+function getPublicFacingHost() {
+  if (backendConfig.host === '0.0.0.0' || backendConfig.host === '::') {
+    return '127.0.0.1';
+  }
+
+  return backendConfig.host;
+}
+
 export function getBackendBaseUrl() {
-  return `http://${backendConfig.host}:${backendConfig.port}`;
+  return `http://${getPublicFacingHost()}:${backendConfig.port}`;
 }

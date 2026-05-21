@@ -5,7 +5,8 @@ const api = {
   system: {
     getConfig: () => ipcRenderer.invoke('system:get-config'),
     getShellInfo: () => ipcRenderer.invoke('system:get-shell-info'),
-    enableNetworkAccess: (payload) => ipcRenderer.invoke('system:enable-network-access', payload)
+    enableNetworkAccess: (payload) => ipcRenderer.invoke('system:enable-network-access', payload),
+    disableNetworkAccess: (payload) => ipcRenderer.invoke('system:disable-network-access', payload)
   },
   backend: {
     getHealth: () => ipcRenderer.invoke('backend:get-health'),
@@ -27,7 +28,8 @@ const api = {
   whatsapp: {
     getStatus: () => ipcRenderer.invoke('whatsapp:get-status'),
     connect: () => ipcRenderer.invoke('whatsapp:connect'),
-    resetRuntime: () => ipcRenderer.invoke('whatsapp:reset-runtime')
+    resetRuntime: () => ipcRenderer.invoke('whatsapp:reset-runtime'),
+    logout: () => ipcRenderer.invoke('whatsapp:logout')
   },
   polls: {
     getActive: () => ipcRenderer.invoke('polls:get-active'),

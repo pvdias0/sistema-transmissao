@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import express from 'express';
+import { execFileSync } from 'node:child_process';
 import os from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,22 +15,136 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const overlayDirectory = join(__dirname, 'overlay');
 
-function getNetworkAddress() {
-  const interfaces = os.networkInterfaces();
+function isPrivateLanAddress(address) {
+  if (address.startsWith('10.')) {
+    return true;
+  }
 
-  for (const entries of Object.values(interfaces)) {
+  if (address.startsWith('192.168.')) {
+    return true;
+  }
+
+  const parts = address.split('.').map((value) => Number.parseInt(value, 10));
+  return parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31;
+}
+
+function isCarrierGradeNatAddress(address) {
+  const parts = address.split('.').map((value) => Number.parseInt(value, 10));
+  return parts[0] === 100 && parts[1] >= 64 && parts[1] <= 127;
+}
+
+function isLinkLocalAddress(address) {
+  return address.startsWith('169.254.');
+}
+
+function isLikelyVirtualInterface(name) {
+  const normalized = String(name || '').toLowerCase();
+  return (
+    normalized.includes('tailscale') ||
+    normalized.includes('zerotier') ||
+    normalized.includes('vethernet') ||
+    normalized.includes('hyper-v') ||
+    normalized.includes('vmware') ||
+    normalized.includes('virtualbox') ||
+    normalized.includes('docker') ||
+    normalized.includes('wsl')
+  );
+}
+
+function getWindowsDefaultRouteAddress() {
+  if (process.platform !== 'win32') {
+    return null;
+  }
+
+  try {
+    const output = execFileSync('route', ['print', '-4'], {
+      encoding: 'utf8',
+      windowsHide: true
+    });
+
+    const defaultRouteMatch = output.match(
+      /^\s*0\.0\.0\.0\s+0\.0\.0\.0\s+\S+\s+(\d+\.\d+\.\d+\.\d+)\s+\d+\s*$/m
+    );
+
+    return defaultRouteMatch?.[1] || null;
+  } catch {
+    return null;
+  }
+}
+
+function getNetworkCandidates() {
+  const interfaces = os.networkInterfaces();
+  const candidates = [];
+
+  for (const [name, entries] of Object.entries(interfaces)) {
     for (const entry of entries || []) {
       if (entry.family === 'IPv4' && !entry.internal) {
-        return entry.address;
+        candidates.push({
+          name,
+          address: entry.address,
+          privateLan: isPrivateLanAddress(entry.address),
+          carrierGradeNat: isCarrierGradeNatAddress(entry.address),
+          linkLocal: isLinkLocalAddress(entry.address),
+          virtual: isLikelyVirtualInterface(name)
+        });
       }
     }
   }
 
-  return null;
+  return candidates;
+}
+
+function getPreferredNetworkAddress() {
+  const candidates = getNetworkCandidates();
+  const windowsDefaultRouteAddress = getWindowsDefaultRouteAddress();
+
+  if (windowsDefaultRouteAddress) {
+    const defaultRouteCandidate = candidates.find(
+      (candidate) => candidate.address === windowsDefaultRouteAddress
+    );
+
+    if (defaultRouteCandidate) {
+      return defaultRouteCandidate.address;
+    }
+  }
+
+  const privateLan = candidates.find((candidate) => candidate.privateLan && !candidate.virtual);
+  if (privateLan) {
+    return privateLan.address;
+  }
+
+  const privateLanVirtual = candidates.find((candidate) => candidate.privateLan);
+  if (privateLanVirtual) {
+    return privateLanVirtual.address;
+  }
+
+  const nonVirtual = candidates.find(
+    (candidate) => !candidate.virtual && !candidate.carrierGradeNat && !candidate.linkLocal
+  );
+  if (nonVirtual) {
+    return nonVirtual.address;
+  }
+
+  const nonCgNat = candidates.find((candidate) => !candidate.carrierGradeNat && !candidate.linkLocal);
+  if (nonCgNat) {
+    return nonCgNat.address;
+  }
+
+  return candidates[0]?.address || null;
+}
+
+function getRecommendedNetworkCandidate() {
+  const address = getPreferredNetworkAddress();
+
+  if (!address) {
+    return null;
+  }
+
+  return getNetworkCandidates().find((candidate) => candidate.address === address) || null;
 }
 
 function getNetworkBaseUrl() {
-  const address = getNetworkAddress();
+  const address = getPreferredNetworkAddress();
 
   if (!address) {
     return null;
@@ -105,6 +220,8 @@ export async function createApp({ startedAt }) {
     const whatsappSnapshot = whatsapp.getSnapshot();
     const runtimeStatusMeta = runtimeStateStorage.getStatusMeta();
     const networkBaseUrl = getNetworkBaseUrl();
+    const networkCandidates = getNetworkCandidates();
+    const recommendedNetworkCandidate = getRecommendedNetworkCandidate();
 
     response.json({
       app: {
@@ -120,6 +237,8 @@ export async function createApp({ startedAt }) {
         overlayMessageUrl: `${getBackendBaseUrl()}/overlay/message`,
         overlayPollUrl: `${getBackendBaseUrl()}/overlay/poll`,
         networkBaseUrl,
+        recommendedNetworkAddress: recommendedNetworkCandidate?.address || null,
+        networkCandidates,
         overlayNetworkUrl: networkBaseUrl ? `${networkBaseUrl}/overlay` : null,
         overlayNetworkMessageUrl: networkBaseUrl ? `${networkBaseUrl}/overlay/message` : null,
         overlayNetworkPollUrl: networkBaseUrl ? `${networkBaseUrl}/overlay/poll` : null
@@ -320,7 +439,39 @@ export async function createApp({ startedAt }) {
   app.post('/api/polls', (request, response) => {
     const title = request.body?.title?.trim();
     const options = Array.isArray(request.body?.options)
-      ? request.body.options.map((option) => String(option || '').trim()).filter(Boolean)
+      ? request.body.options
+          .map((option) => {
+            if (typeof option === 'string') {
+              const label = String(option || '').trim();
+
+              if (!label) {
+                return null;
+              }
+
+              return {
+                label,
+                color: '#8ef2cf',
+                aliases: []
+              };
+            }
+
+            const label = String(option?.label || '').trim();
+
+            if (!label) {
+              return null;
+            }
+
+            const aliases = Array.isArray(option?.aliases)
+              ? option.aliases.map((alias) => String(alias || '').trim()).filter(Boolean)
+              : [];
+
+            return {
+              label,
+              color: String(option?.color || '').trim() || '#8ef2cf',
+              aliases
+            };
+          })
+          .filter(Boolean)
       : [];
 
     if (!title) {
@@ -357,6 +508,11 @@ export async function createApp({ startedAt }) {
 
   app.post('/api/whatsapp/reset-runtime', async (_request, response) => {
     const snapshot = await whatsapp.resetRuntime();
+    response.json(snapshot);
+  });
+
+  app.post('/api/whatsapp/logout', async (_request, response) => {
+    const snapshot = await whatsapp.logout();
     response.json(snapshot);
   });
 

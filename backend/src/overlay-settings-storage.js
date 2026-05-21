@@ -12,6 +12,8 @@ const DEFAULT_SETTINGS = {
   },
   message: {
     fontSize: 32,
+    boxWidth: 1080,
+    boxHeight: 560,
     fontFamily: 'Segoe UI',
     textColor: '#f7fbfb',
     accentColor: '#8ef2cf',
@@ -20,6 +22,8 @@ const DEFAULT_SETTINGS = {
   },
   poll: {
     fontSize: 24,
+    boxWidth: 680,
+    boxHeight: 360,
     fontFamily: 'Segoe UI',
     textColor: '#f7fbfb',
     accentColor: '#8ef2cf',
@@ -40,6 +44,16 @@ function normalizeFontSize(value, fallback) {
   }
 
   return clamp(parsed, 18, 56);
+}
+
+function normalizeBoxDimension(value, fallback) {
+  const parsed = Number.parseInt(value, 10);
+
+  if (!Number.isInteger(parsed)) {
+    return fallback;
+  }
+
+  return clamp(parsed, 180, 1800);
 }
 
 function normalizeFontFamily(value, fallback) {
@@ -64,6 +78,15 @@ function normalizeColor(value, fallback) {
 
 function normalizeBackgroundImageUrl(value) {
   const normalized = String(value || '').trim();
+
+  if (!normalized) {
+    return '';
+  }
+
+  if (normalized.startsWith('data:image/')) {
+    return normalized.slice(0, 3000000);
+  }
+
   return normalized.slice(0, 500);
 }
 
@@ -95,6 +118,11 @@ function normalizeSettings(input = {}) {
     },
     message: {
       fontSize: normalizeFontSize(input?.message?.fontSize, DEFAULT_SETTINGS.message.fontSize),
+      boxWidth: normalizeBoxDimension(input?.message?.boxWidth, DEFAULT_SETTINGS.message.boxWidth),
+      boxHeight: normalizeBoxDimension(
+        input?.message?.boxHeight,
+        DEFAULT_SETTINGS.message.boxHeight
+      ),
       fontFamily: normalizeFontFamily(
         input?.message?.fontFamily,
         DEFAULT_SETTINGS.message.fontFamily
@@ -112,6 +140,8 @@ function normalizeSettings(input = {}) {
     },
     poll: {
       fontSize: normalizeFontSize(input?.poll?.fontSize, DEFAULT_SETTINGS.poll.fontSize),
+      boxWidth: normalizeBoxDimension(input?.poll?.boxWidth, DEFAULT_SETTINGS.poll.boxWidth),
+      boxHeight: normalizeBoxDimension(input?.poll?.boxHeight, DEFAULT_SETTINGS.poll.boxHeight),
       fontFamily: normalizeFontFamily(input?.poll?.fontFamily, DEFAULT_SETTINGS.poll.fontFamily),
       textColor: normalizeColor(input?.poll?.textColor, DEFAULT_SETTINGS.poll.textColor),
       accentColor: normalizeColor(input?.poll?.accentColor, DEFAULT_SETTINGS.poll.accentColor),

@@ -251,6 +251,44 @@ async function enableNetworkAccessRule(port) {
   }
 }
 
+async function disableNetworkAccessRule(port) {
+  if (process.platform !== 'win32') {
+    return { ok: false, error: 'Disponivel apenas no Windows.' }
+  }
+
+  if (!Number.isInteger(port) || port <= 0) {
+    return { ok: false, error: 'Porta do backend invalida.' }
+  }
+
+  const ruleName = `Sistema Transmissao (porta ${port})`
+  const firewallCommand = `netsh advfirewall firewall delete rule name="${ruleName}" | Out-Null`
+
+  try {
+    const exitCode = await runElevatedPowerShell(firewallCommand)
+
+    if (exitCode !== 0) {
+      return { ok: false, error: 'Falha ao remover regra do firewall.' }
+    }
+
+    const restarted = await restartBackendWithHost(null)
+    return {
+      ok: true,
+      data: {
+        restarted
+      }
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : ''
+    const isCanceled = message.toLowerCase().includes('canceled') || message.includes('cancel')
+    return {
+      ok: false,
+      error: isCanceled
+        ? 'Permissao de administrador negada.'
+        : 'Falha ao solicitar remocao da regra no firewall.'
+    }
+  }
+}
+
 function createWindow() {
   const mainWindow = new BrowserWindow({
     width: 1280,
@@ -290,6 +328,7 @@ function registerIpcHandlers() {
   ipcMain.removeHandler('backend:get-moderation-state')
   ipcMain.removeHandler('backend:cleanup')
   ipcMain.removeHandler('system:enable-network-access')
+  ipcMain.removeHandler('system:disable-network-access')
   ipcMain.removeHandler('overlay:update-settings')
   ipcMain.removeHandler('backend:create-test-message')
   ipcMain.removeHandler('backend:approve-item')
@@ -300,6 +339,7 @@ function registerIpcHandlers() {
   ipcMain.removeHandler('whatsapp:get-status')
   ipcMain.removeHandler('whatsapp:connect')
   ipcMain.removeHandler('whatsapp:reset-runtime')
+  ipcMain.removeHandler('whatsapp:logout')
   ipcMain.removeHandler('polls:get-active')
   ipcMain.removeHandler('polls:create')
   ipcMain.removeHandler('polls:close')
@@ -317,6 +357,10 @@ function registerIpcHandlers() {
 
   ipcMain.handle('system:enable-network-access', async (_event, payload) => {
     return enableNetworkAccessRule(Number(payload?.port))
+  })
+
+  ipcMain.handle('system:disable-network-access', async (_event, payload) => {
+    return disableNetworkAccessRule(Number(payload?.port))
   })
 
   ipcMain.handle('backend:get-health', async () => {
@@ -535,6 +579,22 @@ function registerIpcHandlers() {
       return {
         ok: false,
         error: error instanceof Error ? error.message : 'Falha ao recuperar sessao do WhatsApp'
+      }
+    }
+  })
+
+  ipcMain.handle('whatsapp:logout', async () => {
+    try {
+      return {
+        ok: true,
+        data: await requestBackendWithOptions('/api/whatsapp/logout', {
+          method: 'POST'
+        })
+      }
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : 'Falha ao desconectar WhatsApp'
       }
     }
   })

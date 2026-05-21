@@ -1,6 +1,8 @@
-import { useEffect, useState } from 'react'
+﻿import { useEffect, useState } from 'react'
 
 const REFRESH_INTERVAL_MS = 4000
+const MEDIA_TRANSPORT_REFRESH_INTERVAL_MS = 250
+const BLOCKED_WORDS_STORAGE_KEY = 'sistema-transmissao.blocked-words.v1'
 
 const INITIAL_FORM = {
   author: '',
@@ -8,9 +10,19 @@ const INITIAL_FORM = {
   content: ''
 }
 
+const DEFAULT_POLL_OPTION_COLORS = ['#16a34a', '#dc2626', '#2563eb', '#d97706', '#7c3aed']
+
+function createPollOptionDraft(index) {
+  return {
+    label: '',
+    color: DEFAULT_POLL_OPTION_COLORS[index] || '#8ef2cf',
+    aliasesText: ''
+  }
+}
+
 const INITIAL_POLL_FORM = {
   title: '',
-  options: ['', '']
+  options: [createPollOptionDraft(0), createPollOptionDraft(1)]
 }
 
 const OVERLAY_FONT_OPTIONS = [
@@ -24,6 +36,22 @@ const OVERLAY_FONT_OPTIONS = [
 
 function formatBooleanLabel(value) {
   return value ? 'Ativo' : 'Inativo'
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+
+    reader.onload = () => {
+      resolve(typeof reader.result === 'string' ? reader.result : '')
+    }
+
+    reader.onerror = () => {
+      reject(new Error('Nao foi possivel ler a imagem selecionada.'))
+    }
+
+    reader.readAsDataURL(file)
+  })
 }
 
 function formatLastCheck(value) {
@@ -62,6 +90,68 @@ function resolveMediaUrl(baseUrl, publicPath) {
   return new URL(publicPath, `${baseUrl}/`).toString()
 }
 
+function normalizeSearchText(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim()
+}
+
+function parseOptionAliasesInput(value) {
+  return String(value || '')
+    .split(/[\n,;]+/)
+    .map((alias) => alias.trim())
+    .filter(Boolean)
+}
+
+function parseBlockedWords(value) {
+  return String(value || '')
+    .split(/[\n,;]+/)
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+}
+
+function itemMatchesSearch(item, searchTerm) {
+  const normalizedSearch = normalizeSearchText(searchTerm)
+
+  if (!normalizedSearch) {
+    return true
+  }
+
+  const searchableText = [
+    item.author,
+    item.phone,
+    item.content,
+    item.source,
+    item.pollVote?.optionLabel
+  ]
+    .filter(Boolean)
+    .join(' ')
+
+  return normalizeSearchText(searchableText).includes(normalizedSearch)
+}
+
+function getBlockedWordMatches(item, blockedWords) {
+  const normalizedContent = normalizeSearchText(item?.content || '')
+
+  if (!normalizedContent || !blockedWords.length) {
+    return []
+  }
+
+  return blockedWords.filter((word, index) => {
+    const normalizedWord = normalizeSearchText(word)
+
+    if (!normalizedWord) {
+      return false
+    }
+
+    return blockedWords.findIndex(
+      (candidate) => normalizeSearchText(candidate) === normalizedWord
+    ) === index && normalizedContent.includes(normalizedWord)
+  })
+}
+
 function getStatusLabel(status) {
   if (status === 'pending') return 'Pendente'
   if (status === 'approved') return 'Aprovado'
@@ -76,6 +166,14 @@ function getItemTypeLabel(type) {
   if (type === 'audio') return 'Audio'
   if (type === 'video') return 'Video'
   return 'Item'
+}
+
+function matchesTypeFilter(item, typeFilter) {
+  if (!typeFilter || typeFilter === 'all') {
+    return true
+  }
+
+  return item?.type === typeFilter
 }
 
 function getTransportStatusLabel(status) {
@@ -147,15 +245,23 @@ function App() {
   const [networkAccessSuccess, setNetworkAccessSuccess] = useState('')
   const [formState, setFormState] = useState(INITIAL_FORM)
   const [pollForm, setPollForm] = useState(INITIAL_POLL_FORM)
-  const [queueSearch, setQueueSearch] = useState('')
+  const [receivedSearch, setReceivedSearch] = useState('')
+  const [approvedSearch, setApprovedSearch] = useState('')
+  const [receivedTypeFilter, setReceivedTypeFilter] = useState('all')
+  const [approvedTypeFilter, setApprovedTypeFilter] = useState('all')
   const [fontOverrideForm, setFontOverrideForm] = useState({})
   const [overlayAppearanceDrafts, setOverlayAppearanceDrafts] = useState({})
   const [activeTab, setActiveTab] = useState('operation')
   const [previewItemId, setPreviewItemId] = useState(null)
+  const [isOperationSettingsOpen, setIsOperationSettingsOpen] = useState(false)
+  const [activeOperationSettingsSection, setActiveOperationSettingsSection] =
+    useState('blocked_words')
+  const [blockedWordsText, setBlockedWordsText] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isActing, setIsActing] = useState(false)
   const [isConnecting, setIsConnecting] = useState(false)
   const [isRecoveringRuntime, setIsRecoveringRuntime] = useState(false)
+  const [isDisconnectingWhatsApp, setIsDisconnectingWhatsApp] = useState(false)
   const [isCreatingPoll, setIsCreatingPoll] = useState(false)
   const [isClosingPoll, setIsClosingPoll] = useState(false)
   const [isCleaningRuntime, setIsCleaningRuntime] = useState(false)
@@ -225,6 +331,61 @@ function App() {
     }
   }, [actionError, whatsAppError])
 
+  useEffect(() => {
+    const liveTransport = moderationState?.mediaTransport
+
+    if (!liveTransport?.itemId) {
+      return undefined
+    }
+
+    let intervalId
+    let active = true
+
+    async function refreshMediaTransportState() {
+      const moderationResult = await window.api.backend.getModerationState()
+
+      if (!active || !moderationResult.ok) {
+        return
+      }
+
+      setModerationState(moderationResult.data)
+    }
+
+    void refreshMediaTransportState()
+    intervalId = window.setInterval(
+      refreshMediaTransportState,
+      MEDIA_TRANSPORT_REFRESH_INTERVAL_MS
+    )
+
+    return () => {
+      active = false
+
+      if (intervalId) {
+        window.clearInterval(intervalId)
+      }
+    }
+  }, [moderationState?.mediaTransport?.itemId, moderationState?.mediaTransport?.status])
+
+  useEffect(() => {
+    try {
+      const savedBlockedWords = window.localStorage.getItem(BLOCKED_WORDS_STORAGE_KEY)
+
+      if (savedBlockedWords !== null) {
+        setBlockedWordsText(savedBlockedWords)
+      }
+    } catch (_error) {
+      // Ignora falhas de persistencia local no renderer.
+    }
+  }, [])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(BLOCKED_WORDS_STORAGE_KEY, blockedWordsText)
+    } catch (_error) {
+      // Ignora falhas de persistencia local no renderer.
+    }
+  }, [blockedWordsText])
+
   async function refreshOperationalState() {
     const [statusResult, moderationResult, whatsappResult] = await Promise.all([
       window.api.backend.getStatus(),
@@ -235,6 +396,21 @@ function App() {
     setBackendStatus(statusResult.ok ? statusResult.data : null)
     setModerationState(moderationResult.ok ? moderationResult.data : null)
     setWhatsAppStatus(whatsappResult.ok ? whatsappResult.data : null)
+  }
+
+  async function handleSetLiveItem(itemId) {
+    const targetItem = (moderationState?.moderationQueue || []).find((item) => item.id === itemId)
+    const blockedMatches = getBlockedWordMatches(targetItem, parseBlockedWords(blockedWordsText))
+
+    if (blockedMatches.length) {
+      setActionError(
+        `Este item nao pode ir ao ar porque contem termo(s) bloqueado(s): ${blockedMatches.join(', ')}.`
+      )
+      setPreviewItemId(itemId)
+      return
+    }
+
+    await runItemAction(() => window.api.backend.setLiveItem(itemId))
   }
 
   async function handleSubmit(event) {
@@ -303,6 +479,22 @@ function App() {
     await refreshOperationalState()
   }
 
+  async function handleLogoutWhatsApp() {
+    setWhatsAppError('')
+    setIsDisconnectingWhatsApp(true)
+
+    const result = await window.api.whatsapp.logout()
+
+    setIsDisconnectingWhatsApp(false)
+
+    if (!result.ok) {
+      setWhatsAppError(result.error)
+      return
+    }
+
+    await refreshOperationalState()
+  }
+
   async function handleCreatePoll(event) {
     event.preventDefault()
     setPollError('')
@@ -310,7 +502,11 @@ function App() {
 
     const payload = {
       title: pollForm.title,
-      options: pollForm.options
+      options: pollForm.options.map((option) => ({
+        label: option.label,
+        color: option.color,
+        aliases: parseOptionAliasesInput(option.aliasesText)
+      }))
     }
 
     const result = await window.api.polls.create(payload)
@@ -381,6 +577,29 @@ function App() {
       result?.data?.restarted
         ? 'Acesso na rede liberado. O backend foi reiniciado para ouvir na rede local.'
         : 'Acesso na rede liberado. Reinicie o backend com HOST=0.0.0.0 para ouvir na rede.'
+    )
+    await refreshOperationalState()
+  }
+
+  async function handleDisableNetworkAccess() {
+    setNetworkAccessError('')
+    setNetworkAccessSuccess('')
+    setIsEnablingNetworkAccess(true)
+
+    const port = backendStatus?.transport?.port
+    const result = await window.api.system.disableNetworkAccess({ port })
+
+    setIsEnablingNetworkAccess(false)
+
+    if (!result?.ok) {
+      setNetworkAccessError(result?.error || 'Falha ao retirar acesso da rede.')
+      return
+    }
+
+    setNetworkAccessSuccess(
+      result?.data?.restarted
+        ? 'Acesso da rede removido. O backend voltou a ouvir apenas localmente.'
+        : 'Acesso da rede removido.'
     )
     await refreshOperationalState()
   }
@@ -504,6 +723,50 @@ function App() {
     })
   }
 
+  function isValidOverlayBoxDimension(value) {
+    const parsedValue = Number.parseInt(value, 10)
+    return Number.isInteger(parsedValue) && parsedValue >= 180 && parsedValue <= 1800
+  }
+
+  async function handleOverlayBoxDimensionInputChange(target, key, value) {
+    handleOverlayAppearanceDraftChange(target, key, value)
+
+    if (!isValidOverlayBoxDimension(value)) {
+      return
+    }
+
+    await updateOverlaySettings(target, {
+      [key]: Number.parseInt(value, 10)
+    })
+  }
+
+  async function commitOverlayBoxDimension(target, key) {
+    const rawValue =
+      overlayAppearanceDrafts?.[target]?.[key] ?? backendStatus?.overlaySettings?.[target]?.[key] ?? ''
+    const parsedValue = Number.parseInt(rawValue, 10)
+
+    if (!Number.isInteger(parsedValue)) {
+      setOverlaySettingsError('Informe um valor numerico valido para largura ou altura do card.')
+      return
+    }
+
+    const didUpdate = await updateOverlaySettings(target, {
+      [key]: parsedValue
+    })
+
+    if (!didUpdate) {
+      return
+    }
+
+    setOverlayAppearanceDrafts((current) => ({
+      ...current,
+      [target]: {
+        ...(current[target] || {}),
+        [key]: String(parsedValue)
+      }
+    }))
+  }
+
   async function commitOverlayBackgroundImage(target) {
     const nextValue =
       overlayAppearanceDrafts?.[target]?.backgroundImageUrl ??
@@ -543,6 +806,55 @@ function App() {
         backgroundImageUrl: ''
       }
     }))
+  }
+
+  async function handleOverlayBackgroundFileSelected(target, event) {
+    const input = event.target
+    const file = input.files?.[0]
+
+    if (!file) {
+      return
+    }
+
+    setOverlaySettingsError('')
+
+    if (!file.type.startsWith('image/')) {
+      setOverlaySettingsError('Selecione um arquivo de imagem valido para o fundo.')
+      input.value = ''
+      return
+    }
+
+    if (file.size > 2_000_000) {
+      setOverlaySettingsError('A imagem de fundo deve ter no maximo 2 MB.')
+      input.value = ''
+      return
+    }
+
+    try {
+      const dataUrl = await readFileAsDataUrl(file)
+      const didUpdate = await updateOverlaySettings(target, {
+        backgroundImageUrl: dataUrl
+      })
+
+      if (!didUpdate) {
+        input.value = ''
+        return
+      }
+
+      setOverlayAppearanceDrafts((current) => ({
+        ...current,
+        [target]: {
+          ...(current[target] || {}),
+          backgroundImageUrl: dataUrl
+        }
+      }))
+    } catch (error) {
+      setOverlaySettingsError(
+        error instanceof Error ? error.message : 'Nao foi possivel carregar a imagem selecionada.'
+      )
+    } finally {
+      input.value = ''
+    }
   }
 
   async function copyToClipboard(value) {
@@ -597,7 +909,16 @@ function App() {
     setPollForm((current) => ({
       ...current,
       options: current.options.map((option, optionIndex) =>
-        optionIndex === index ? value : option
+        optionIndex === index ? { ...option, label: value } : option
+      )
+    }))
+  }
+
+  function handlePollOptionFieldChange(index, key, value) {
+    setPollForm((current) => ({
+      ...current,
+      options: current.options.map((option, optionIndex) =>
+        optionIndex === index ? { ...option, [key]: value } : option
       )
     }))
   }
@@ -610,7 +931,7 @@ function App() {
 
       return {
         ...current,
-        options: [...current.options, '']
+        options: [...current.options, createPollOptionDraft(current.options.length)]
       }
     })
   }
@@ -630,31 +951,28 @@ function App() {
 
   const queue = moderationState?.moderationQueue || []
   const liveItem = moderationState?.liveItem
-  const normalizedQueueSearch = queueSearch.trim().toLowerCase()
-  const filteredQueue = normalizedQueueSearch
-    ? queue.filter((item) => {
-        const searchableText = [
-          item.author,
-          item.phone,
-          item.content,
-          item.source,
-          item.pollVote?.optionLabel
-        ]
-          .filter(Boolean)
-          .join(' ')
-          .toLowerCase()
-
-        return searchableText.includes(normalizedQueueSearch)
-      })
-    : queue
+  const blockedWords = parseBlockedWords(blockedWordsText)
+  const receivedItems = queue.filter((item) => item.status !== 'approved' && item.status !== 'on_air')
+  const approvedItems = queue.filter((item) => item.status === 'approved')
+  const filteredReceivedItems = receivedItems.filter(
+    (item) => itemMatchesSearch(item, receivedSearch) && matchesTypeFilter(item, receivedTypeFilter)
+  )
+  const filteredApprovedItems = approvedItems.filter(
+    (item) => itemMatchesSearch(item, approvedSearch) && matchesTypeFilter(item, approvedTypeFilter)
+  )
   const previewItem = queue.find((item) => item.id === previewItemId) || null
+  const previewBlockedMatches = previewItem ? getBlockedWordMatches(previewItem, blockedWords) : []
+  const isPreviewBlockedFromAir = previewBlockedMatches.length > 0
   const mediaTransport = moderationState?.mediaTransport
-  const counts = moderationState?.counts
   const activePoll = moderationState?.activePoll
   const whatsappStatusClass = getWhatsAppStatusClass(whatsAppStatus?.connection)
   const backendBaseUrl = config?.backendBaseUrl || ''
   const canRecoverWhatsAppSession =
     whatsAppStatus?.connection === 'error' || whatsAppStatus?.connection === 'disconnected'
+  const canLogoutWhatsApp =
+    whatsAppStatus?.connection === 'ready' ||
+    whatsAppStatus?.connection === 'authenticated' ||
+    whatsAppStatus?.connection === 'qr_ready'
   const hasControllableMedia =
     Boolean(liveItem) &&
     (liveItem?.type === 'audio' || liveItem?.type === 'video') &&
@@ -677,6 +995,145 @@ function App() {
     backendStatus?.transport?.overlayNetworkPollUrl ||
     backendStatus?.transport?.overlayNetworkUrl ||
     ''
+  const recommendedNetworkAddress = backendStatus?.transport?.recommendedNetworkAddress || ''
+  const networkCandidates = backendStatus?.transport?.networkCandidates || []
+  const otherNetworkCandidates = networkCandidates.filter(
+    (candidate) => candidate.address !== recommendedNetworkAddress
+  )
+  const isNetworkAccessEnabled = backendStatus?.transport?.host === '0.0.0.0'
+  const summaryPendingCount = receivedItems.filter((item) => item.status === 'pending').length
+
+  function renderOperationQueuePanel({
+    title,
+    kicker,
+    subtitle,
+    items,
+    showControls,
+    searchValue,
+    onSearchChange,
+    typeFilter,
+    onTypeFilterChange,
+    emptyMessage
+  }) {
+      return (
+        <article
+          className={`operator-panel operation-list-panel ${items.length ? '' : 'operation-list-panel-empty'}`}
+        >
+        <div className="operator-panel-header">
+          <div>
+            <p className="card-kicker">{kicker}</p>
+            <h2>{title}</h2>
+            <p className="panel-subtitle">{subtitle}</p>
+            </div>
+            <span className="mini-badge">{items.length} item(ns)</span>
+          </div>
+
+          {showControls ? (
+            <div className="operator-queue-toolbar">
+              <label className="queue-search-field">
+                <span>Buscar nesta lista</span>
+                <input
+                  onChange={(event) => onSearchChange(event.target.value)}
+                  placeholder="Procure por nome, grupo, numero ou trecho da mensagem"
+                  type="text"
+                  value={searchValue}
+                />
+              </label>
+              <label className="queue-type-filter-field">
+                <span>Tipo</span>
+                <select onChange={(event) => onTypeFilterChange(event.target.value)} value={typeFilter}>
+                  <option value="all">Todos</option>
+                  <option value="text">Texto</option>
+                  <option value="image">Imagem</option>
+                  <option value="audio">Audio</option>
+                  <option value="video">Video</option>
+                </select>
+              </label>
+              {searchValue ? (
+                <button className="ghost-button" onClick={() => onSearchChange('')} type="button">
+                  Limpar busca
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+
+        {items.length ? (
+          <div className="operator-queue-scroll operator-queue-scroll-compact">
+            <div className="operator-queue">
+              {items.map((item) => {
+                const isSelected = previewItemId === item.id
+                const blockedMatches = getBlockedWordMatches(item, blockedWords)
+
+                return (
+                  <article
+                    className={`operator-queue-item ${isSelected ? 'is-selected' : ''}`}
+                    key={item.id}
+                    onClick={() => setPreviewItemId(item.id)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault()
+                        setPreviewItemId(item.id)
+                      }
+                    }}
+                    role="button"
+                    tabIndex={0}
+                  >
+                    <div className="operator-queue-main">
+                      <div className="operator-queue-copy">
+                        <div className="operator-queue-topline">
+                          <h3>{item.author}</h3>
+                          <span className={`mini-status mini-status-${item.status}`}>
+                            {getStatusLabel(item.status)}
+                          </span>
+                        </div>
+                        <p className="operator-queue-phone">{item.phone}</p>
+                        <p className="operator-queue-snippet">
+                          {item.content?.trim()
+                            ? item.content
+                            : `${getItemTypeLabel(item.type)} recebida sem texto adicional.`}
+                        </p>
+                        <div className="queue-meta">
+                          <span>{formatTimestamp(item.receivedAt)}</span>
+                          <span>{getItemTypeLabel(item.type)}</span>
+                          <span>{item.source}</span>
+                        </div>
+                        {item.pollVote ? (
+                          <p className="vote-match">
+                            Voto reconhecido em {item.pollVote.optionLabel}
+                            {item.pollVote.wasReplacement ? ' e substituiu o anterior.' : '.'}
+                          </p>
+                        ) : null}
+                        {blockedMatches.length ? (
+                          <p className="inline-warning">
+                            Filtro de palavras: {blockedMatches.join(', ')}
+                          </p>
+                        ) : null}
+                      </div>
+                      <div className="operator-queue-actions">
+                        <button
+                          className={isSelected ? 'primary-button' : 'ghost-button'}
+                          disabled={isSelected}
+                          onClick={(event) => {
+                            event.stopPropagation()
+                            setPreviewItemId(item.id)
+                          }}
+                          type="button"
+                        >
+                          {isSelected ? 'Selecionado' : 'Abrir preview'}
+                        </button>
+                      </div>
+                    </div>
+                  </article>
+                )
+              })}
+            </div>
+          </div>
+        ) : (
+          <p className="empty-state">{emptyMessage}</p>
+        )}
+      </article>
+    )
+  }
 
   function getOverlayFontInputValue(target) {
     const overlaySettings = backendStatus?.overlaySettings
@@ -706,84 +1163,7 @@ function App() {
 
   return (
     <main className="app-shell operator-shell">
-      <section className="operator-hero">
-        <div className="operator-hero-copy">
-          <p className="eyebrow">Central do operador</p>
-          <h1>Receba, revise e publique sem se perder na tela</h1>
-          <p className="hero-text">
-            A operacao principal foi reorganizada em um fluxo simples: mensagens recebidas,
-            preview, decisao e transmissao.
-          </p>
-        </div>
-
-        <div className="operator-hero-actions">
-          <span className={`status-pill status-pill-${whatsappStatusClass}`}>
-            WhatsApp {getWhatsAppConnectionLabel(whatsAppStatus?.connection)}
-          </span>
-          <button
-            className="primary-button"
-            disabled={
-              isConnecting ||
-              isRecoveringRuntime ||
-              whatsAppStatus?.connection === 'starting' ||
-              whatsAppStatus?.connection === 'recovering' ||
-              whatsAppStatus?.connection === 'ready'
-            }
-            onClick={handleConnectWhatsApp}
-            type="button"
-          >
-            {isConnecting ? 'Conectando...' : 'Conectar WhatsApp'}
-          </button>
-          <button
-            className="ghost-button"
-            disabled={!canRecoverWhatsAppSession || isRecoveringRuntime || isConnecting}
-            onClick={handleResetWhatsAppRuntime}
-            type="button"
-          >
-            {isRecoveringRuntime ? 'Recuperando...' : 'Recuperar sessao'}
-          </button>
-        </div>
-      </section>
-
-      <section className="operator-summary">
-        <article className="summary-card">
-          <span className="summary-label">Mensagens aguardando</span>
-          <strong className="summary-value">{counts?.pending ?? 0}</strong>
-          <span className="summary-note">Itens que ainda precisam de decisao.</span>
-        </article>
-        <article className="summary-card">
-          <span className="summary-label">Preview atual</span>
-          <strong className="summary-value">{previewItem ? previewItem.author : 'Nenhum item'}</strong>
-          <span className="summary-note">
-            {previewItem ? `${getItemTypeLabel(previewItem.type)} pronto para revisao` : 'Escolha um item da fila para revisar.'}
-          </span>
-        </article>
-        <article className="summary-card">
-          <span className="summary-label">No ar</span>
-          <strong className="summary-value">{liveItem ? liveItem.author : 'Nada ao vivo'}</strong>
-          <span className="summary-note">
-            {liveItem ? `${getItemTypeLabel(liveItem.type)} exibido agora` : 'Nenhum item enviado para a transmissao.'}
-          </span>
-        </article>
-        <article className="summary-card">
-          <span className="summary-label">Enquete</span>
-          <strong className="summary-value">{activePoll ? activePoll.title : 'Sem enquete'}</strong>
-          <span className="summary-note">
-            {activePoll ? `${activePoll.totalVoters} voto(s) unicos registrados` : 'Crie uma enquete quando precisar abrir votacao.'}
-          </span>
-        </article>
-      </section>
-
-      {(whatsAppError || actionError || overlaySettingsError || pollError) ? (
-        <section className="operator-alerts">
-          {whatsAppError ? <p className="inline-error">{whatsAppError}</p> : null}
-          {actionError ? <p className="inline-error">{actionError}</p> : null}
-          {overlaySettingsError ? <p className="inline-error">{overlaySettingsError}</p> : null}
-          {pollError ? <p className="inline-error">{pollError}</p> : null}
-        </section>
-      ) : null}
-
-      <section className="operator-tabs">
+      <section className="operator-tabs operator-tabs-top">
         <button
           className={`operator-tab-button ${activeTab === 'operation' ? 'is-active' : ''}`}
           onClick={() => setActiveTab('operation')}
@@ -814,119 +1194,25 @@ function App() {
         </button>
       </section>
 
+      {(whatsAppError || actionError || overlaySettingsError || pollError) ? (
+        <section className="operator-alerts">
+          {whatsAppError ? <p className="inline-error">{whatsAppError}</p> : null}
+          {actionError ? <p className="inline-error">{actionError}</p> : null}
+          {overlaySettingsError ? <p className="inline-error">{overlaySettingsError}</p> : null}
+          {pollError ? <p className="inline-error">{pollError}</p> : null}
+        </section>
+      ) : null}
+
       {activeTab === 'operation' ? (
-        <section className="operator-layout">
-          <section className="operator-main">
-            <article className="operator-panel">
-              <div className="operator-panel-header">
-                <div>
-                  <p className="card-kicker">Entrada</p>
-                  <h2>Mensagens recebidas</h2>
-                  <p className="panel-subtitle">
-                    Escolha um item para revisar no preview antes de aprovar, rejeitar ou colocar no ar.
-                  </p>
-                </div>
-                <span className="mini-badge">{filteredQueue.length} item(ns)</span>
-              </div>
-
-              <div className="operator-queue-toolbar">
-                <label className="queue-search-field">
-                  <span>Buscar na fila</span>
-                  <input
-                    onChange={(event) => setQueueSearch(event.target.value)}
-                    placeholder="Procure por nome, grupo, numero ou trecho da mensagem"
-                    type="text"
-                    value={queueSearch}
-                  />
-                </label>
-                {queueSearch ? (
-                  <button className="ghost-button" onClick={() => setQueueSearch('')} type="button">
-                    Limpar busca
-                  </button>
-                ) : null}
-              </div>
-
-              {filteredQueue.length ? (
-                <div className="operator-queue-scroll">
-                  <div className="operator-queue">
-                    {filteredQueue.map((item) => {
-                      const isSelected = previewItemId === item.id
-
-                      return (
-                        <article
-                          className={`operator-queue-item ${isSelected ? 'is-selected' : ''}`}
-                          key={item.id}
-                          onClick={() => setPreviewItemId(item.id)}
-                          onKeyDown={(event) => {
-                            if (event.key === 'Enter' || event.key === ' ') {
-                              event.preventDefault()
-                              setPreviewItemId(item.id)
-                            }
-                          }}
-                          role="button"
-                          tabIndex={0}
-                        >
-                          <div className="operator-queue-main">
-                            <div className="operator-queue-copy">
-                              <div className="operator-queue-topline">
-                                <h3>{item.author}</h3>
-                                <span className={`mini-status mini-status-${item.status}`}>
-                                  {getStatusLabel(item.status)}
-                                </span>
-                              </div>
-                              <p className="operator-queue-phone">{item.phone}</p>
-                              <p className="operator-queue-snippet">
-                                {item.content?.trim()
-                                  ? item.content
-                                  : `${getItemTypeLabel(item.type)} recebida sem texto adicional.`}
-                              </p>
-                              <div className="queue-meta">
-                                <span>{formatTimestamp(item.receivedAt)}</span>
-                                <span>{getItemTypeLabel(item.type)}</span>
-                                <span>{item.source}</span>
-                              </div>
-                              {item.pollVote ? (
-                                <p className="vote-match">
-                                  Voto reconhecido em {item.pollVote.optionLabel}
-                                  {item.pollVote.wasReplacement ? ' e substituiu o anterior.' : '.'}
-                                </p>
-                              ) : null}
-                            </div>
-                            <div className="operator-queue-actions">
-                              <button
-                                className={isSelected ? 'primary-button' : 'ghost-button'}
-                                disabled={isSelected}
-                                onClick={(event) => {
-                                  event.stopPropagation()
-                                  setPreviewItemId(item.id)
-                                }}
-                                type="button"
-                              >
-                                {isSelected ? 'Selecionado' : 'Revisar'}
-                              </button>
-                            </div>
-                          </div>
-                        </article>
-                      )
-                    })}
-                  </div>
-                </div>
-              ) : (
-                <p className="empty-state">
-                  {queue.length
-                    ? 'Nenhum item encontrado com esse termo de busca.'
-                    : 'Nenhuma mensagem na fila. Quando o WhatsApp receber novas entradas, elas aparecem aqui.'}
-                </p>
-              )}
-            </article>
-
+        <section className="operator-tab-panel-stack">
+          <section className="operation-top-grid">
             <article className="operator-panel">
               <div className="operator-panel-header">
                 <div>
                   <p className="card-kicker">Revisao</p>
-                  <h2>Preview do operador</h2>
+                  <h2>Preview</h2>
                   <p className="panel-subtitle">
-                    Este e o lugar para ouvir, assistir ou ler antes de decidir.
+                    Revise texto, imagem, audio ou video antes de aprovar, rejeitar ou colocar no ar.
                   </p>
                 </div>
                 <button
@@ -990,6 +1276,12 @@ function App() {
 
                   <p className="preview-guidance">{getPreviewGuidance(previewItem.status)}</p>
 
+                  {isPreviewBlockedFromAir ? (
+                    <p className="inline-warning">
+                      Este item nao pode ir ao ar com o filtro atual porque contem: {previewBlockedMatches.join(', ')}.
+                    </p>
+                  ) : null}
+
                   <div className="preview-decision-bar">
                     <button
                       className="ghost-button"
@@ -1017,25 +1309,21 @@ function App() {
                     </button>
                     <button
                       className="primary-button"
-                      disabled={isActing || previewItem.status === 'rejected'}
-                      onClick={() =>
-                        runItemAction(() => window.api.backend.setLiveItem(previewItem.id))
-                      }
+                      disabled={isActing || previewItem.status === 'rejected' || isPreviewBlockedFromAir}
+                      onClick={() => void handleSetLiveItem(previewItem.id)}
                       type="button"
                     >
-                      Colocar no ar
+                      {isPreviewBlockedFromAir ? 'Bloqueado pelo filtro' : 'Colocar no ar'}
                     </button>
                   </div>
                 </article>
               ) : (
                 <p className="empty-state">
-                  Escolha um item em <code>Mensagens recebidas</code> para abrir o preview.
+                  Escolha um item em <code>Mensagens recebidas</code> ou <code>Mensagens aprovadas</code> para abrir o preview.
                 </p>
               )}
             </article>
-          </section>
 
-          <aside className="operator-side">
             <article className="operator-panel">
               <div className="operator-panel-header">
                 <div>
@@ -1045,14 +1333,25 @@ function App() {
                     O que esta sendo exibido agora no overlay usado pelo vMix.
                   </p>
                 </div>
-                <button
-                  className="ghost-button"
-                  disabled={isActing || !liveItem}
-                  onClick={() => runItemAction(() => window.api.backend.clearLiveItem())}
-                  type="button"
-                >
-                  Limpar
-                </button>
+                <div className="operator-panel-actions">
+                  <button
+                    aria-label="Abrir configuracoes da operacao"
+                    className="ghost-button icon-button"
+                    onClick={() => setIsOperationSettingsOpen(true)}
+                    title="Configuracoes da operacao"
+                    type="button"
+                  >
+                    {String.fromCharCode(9881)}
+                  </button>
+                  <button
+                    className="ghost-button"
+                    disabled={isActing || !liveItem}
+                    onClick={() => runItemAction(() => window.api.backend.clearLiveItem())}
+                    type="button"
+                  >
+                    Limpar
+                  </button>
+                </div>
               </div>
 
               {liveItem ? (
@@ -1060,7 +1359,6 @@ function App() {
                   <div className="live-item-header">
                     <div>
                       <h3>{liveItem.author}</h3>
-                      <p>{liveItem.phone}</p>
                     </div>
                     <span className="status-pill ok">No ar</span>
                   </div>
@@ -1183,7 +1481,118 @@ function App() {
                 </p>
               )}
             </article>
-          </aside>
+          </section>
+
+          <section className="operation-lists-grid">
+            {renderOperationQueuePanel({
+              title: 'Mensagens recebidas',
+              kicker: 'Entrada',
+              subtitle:
+                'Itens novos, pendentes ou rejeitados que ainda nao fazem parte da fila de aprovadas.',
+              items: filteredReceivedItems,
+              showControls: receivedItems.length > 0,
+              searchValue: receivedSearch,
+              onSearchChange: setReceivedSearch,
+              typeFilter: receivedTypeFilter,
+              onTypeFilterChange: setReceivedTypeFilter,
+              emptyMessage: receivedItems.length
+                ? 'Nenhum item recebido encontrado com esse termo.'
+                : 'Nenhuma mensagem recebida nesta lista no momento.'
+            })}
+
+            {renderOperationQueuePanel({
+              title: 'Mensagens aprovadas',
+              kicker: 'Prontas',
+              subtitle:
+                'Itens ja liberados pelo operador e prontos para voltar ao preview ou ir ao ar.',
+              items: filteredApprovedItems,
+              showControls: approvedItems.length > 0,
+              searchValue: approvedSearch,
+              onSearchChange: setApprovedSearch,
+              typeFilter: approvedTypeFilter,
+              onTypeFilterChange: setApprovedTypeFilter,
+              emptyMessage: approvedItems.length
+                ? 'Nenhum item aprovado encontrado com esse termo.'
+                : 'Nenhuma mensagem aprovada no momento.'
+            })}
+          </section>
+
+          {isOperationSettingsOpen ? (
+            <div
+              className="operation-modal-backdrop"
+              onClick={() => setIsOperationSettingsOpen(false)}
+              role="presentation"
+            >
+              <section
+                className="operation-modal"
+                onClick={(event) => event.stopPropagation()}
+                role="dialog"
+                aria-modal="true"
+                aria-label="Configuracoes da operacao"
+              >
+                <aside className="operation-modal-sidebar">
+                  <p className="card-kicker">Configuracao</p>
+                  <button
+                    className={`operation-modal-nav-button ${
+                      activeOperationSettingsSection === 'blocked_words' ? 'is-active' : ''
+                    }`}
+                    onClick={() => setActiveOperationSettingsSection('blocked_words')}
+                    type="button"
+                  >
+                    Filtro de palavras
+                  </button>
+                </aside>
+
+                <div className="operation-modal-content">
+                  <div className="operator-panel-header">
+                    <div>
+                      <p className="card-kicker">Operacao</p>
+                      <h2>Filtro de palavras</h2>
+                      <p className="panel-subtitle">
+                        Itens com estas palavras continuam entrando no sistema, mas ficam impedidos de ir ao ar.
+                      </p>
+                    </div>
+                    <button
+                      className="ghost-button"
+                      onClick={() => setIsOperationSettingsOpen(false)}
+                      type="button"
+                    >
+                      Fechar
+                    </button>
+                  </div>
+
+                  <label className="field field-full">
+                    <span>Palavras ou termos bloqueados</span>
+                    <textarea
+                      className="operation-filter-textarea"
+                      onChange={(event) => setBlockedWordsText(event.target.value)}
+                      placeholder={'Ex.: palavrao\ntermo sensivel\nspoiler'}
+                      rows="10"
+                      value={blockedWordsText}
+                    />
+                  </label>
+
+                  <p className="operation-config-note">
+                    Separe por linha, virgula ou ponto e virgula. O bloqueio e salvo automaticamente neste computador.
+                  </p>
+
+                  {blockedWords.length ? (
+                    <div className="operation-filter-chip-list">
+                      {blockedWords.map((word, index) => (
+                        <span className="mini-badge" key={`${word}-${index}`}>
+                          {word}
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="empty-state">
+                      Nenhuma palavra bloqueada configurada ainda.
+                    </p>
+                  )}
+                </div>
+              </section>
+            </div>
+          ) : null}
         </section>
       ) : null}
 
@@ -1216,12 +1625,21 @@ function App() {
                 </p>
                 <div className="poll-options">
                   {activePoll.options.map((option) => (
-                    <article className="poll-option" key={option.id}>
+                    <article
+                      className="poll-option"
+                      key={option.id}
+                      style={{
+                        backgroundColor: option.color || '#8ef2cf',
+                        color: '#ffffff'
+                      }}
+                    >
                       <div className="poll-option-header">
                         <strong>{option.label}</strong>
                         <span>{option.votes} voto(s)</span>
                       </div>
-                      <p className="poll-aliases">Aceita: {option.aliases.join(', ')}</p>
+                      <p className="poll-aliases poll-aliases-on-color">
+                        Aceita: {option.aliases.join(', ')}
+                      </p>
                     </article>
                   ))}
                 </div>
@@ -1238,18 +1656,51 @@ function App() {
                   />
                 </label>
                 <div className="poll-options-builder field field-full">
+                  <p className="poll-options-builder-note">
+                    A propria opcao ja conta como voto. Use palavras-chave extras separadas por virgula
+                    para aceitar atalhos como "s", "ss" ou variacoes parecidas.
+                  </p>
                   <div className="poll-options-builder-list">
                     {pollForm.options.map((option, index) => (
                       <div className="poll-option-editor" key={`poll-option-input-${index}`}>
-                        <label className="field">
-                          <span>Opcao {index + 1}</span>
-                          <input
-                            onChange={(event) => handlePollOptionChange(index, event.target.value)}
-                            placeholder={`Ex.: Opcao ${index + 1}`}
-                            type="text"
-                            value={option}
-                          />
-                        </label>
+                        <div className="poll-option-editor-fields">
+                          <label className="field">
+                            <span>Opcao {index + 1}</span>
+                            <input
+                              onChange={(event) => handlePollOptionChange(index, event.target.value)}
+                              placeholder={`Ex.: Opcao ${index + 1}`}
+                              type="text"
+                              value={option.label}
+                            />
+                          </label>
+
+                          <label className="field field-color">
+                            <span>Cor</span>
+                            <input
+                              onChange={(event) =>
+                                handlePollOptionFieldChange(index, 'color', event.target.value)
+                              }
+                              type="color"
+                              value={option.color}
+                            />
+                          </label>
+
+                          <label className="field field-full">
+                            <span>Palavras-chave extras</span>
+                            <input
+                              onChange={(event) =>
+                                handlePollOptionFieldChange(
+                                  index,
+                                  'aliasesText',
+                                  event.target.value
+                                )
+                              }
+                              placeholder="Ex.: s, ss, simmm"
+                              type="text"
+                              value={option.aliasesText}
+                            />
+                          </label>
+                        </div>
                         <button
                           className="ghost-button"
                           disabled={pollForm.options.length <= 2}
@@ -1366,6 +1817,16 @@ function App() {
                 </div>
 
                 <div className="overlay-style-actions">
+                  <input
+                    accept="image/*"
+                    className="visually-hidden-input"
+                    id="canvas-background-image-upload"
+                    onChange={(event) => void handleOverlayBackgroundFileSelected('canvas', event)}
+                    type="file"
+                  />
+                  <label className="ghost-button file-upload-button" htmlFor="canvas-background-image-upload">
+                    Enviar imagem do fundo
+                  </label>
                   <button
                     className="ghost-button"
                     disabled={isUpdatingOverlaySettings}
@@ -1430,6 +1891,63 @@ function App() {
                 </div>
 
                 <div className="overlay-style-fields">
+                  <label className="field">
+                    <span>Largura da caixa</span>
+                    <input
+                      disabled={isUpdatingOverlaySettings}
+                      onBlur={() => void commitOverlayBoxDimension('message', 'boxWidth')}
+                      onChange={(event) =>
+                        void handleOverlayBoxDimensionInputChange(
+                          'message',
+                          'boxWidth',
+                          event.target.value
+                        )
+                      }
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          event.preventDefault()
+                          void commitOverlayBoxDimension('message', 'boxWidth')
+                        }
+                      }}
+                      max="1800"
+                      min="180"
+                      step="10"
+                      type="number"
+                      value={getOverlayAppearanceValue('message', 'boxWidth')}
+                    />
+                  </label>
+
+                  <label className="field">
+                    <span>Altura da caixa</span>
+                    <input
+                      disabled={isUpdatingOverlaySettings}
+                      onBlur={() => void commitOverlayBoxDimension('message', 'boxHeight')}
+                      onChange={(event) =>
+                        void handleOverlayBoxDimensionInputChange(
+                          'message',
+                          'boxHeight',
+                          event.target.value
+                        )
+                      }
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          event.preventDefault()
+                          void commitOverlayBoxDimension('message', 'boxHeight')
+                        }
+                      }}
+                      max="1800"
+                      min="180"
+                      step="10"
+                      type="number"
+                      value={getOverlayAppearanceValue('message', 'boxHeight')}
+                    />
+                  </label>
+
+                  <p className="network-access-note field-full">
+                    Cada item novo no ar volta primeiro para o autoajuste do conteudo. Os campos
+                    de largura e altura passam a valer como ajuste manual somente para o item atual.
+                  </p>
+
                   <label className="field">
                     <span>Fonte</span>
                     <select
@@ -1525,6 +2043,19 @@ function App() {
                 </div>
 
                 <div className="overlay-style-actions">
+                  <input
+                    accept="image/*"
+                    className="visually-hidden-input"
+                    id="message-background-image-upload"
+                    onChange={(event) => void handleOverlayBackgroundFileSelected('message', event)}
+                    type="file"
+                  />
+                  <label
+                    className="ghost-button file-upload-button"
+                    htmlFor="message-background-image-upload"
+                  >
+                    Enviar imagem da mensagem
+                  </label>
                   <button
                     className="ghost-button"
                     disabled={isUpdatingOverlaySettings}
@@ -1589,6 +2120,63 @@ function App() {
                 </div>
 
                 <div className="overlay-style-fields">
+                  <label className="field">
+                    <span>Largura da caixa</span>
+                    <input
+                      disabled={isUpdatingOverlaySettings}
+                      onBlur={() => void commitOverlayBoxDimension('poll', 'boxWidth')}
+                      onChange={(event) =>
+                        void handleOverlayBoxDimensionInputChange(
+                          'poll',
+                          'boxWidth',
+                          event.target.value
+                        )
+                      }
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          event.preventDefault()
+                          void commitOverlayBoxDimension('poll', 'boxWidth')
+                        }
+                      }}
+                      max="1800"
+                      min="180"
+                      step="10"
+                      type="number"
+                      value={getOverlayAppearanceValue('poll', 'boxWidth')}
+                    />
+                  </label>
+
+                  <label className="field">
+                    <span>Altura da caixa</span>
+                    <input
+                      disabled={isUpdatingOverlaySettings}
+                      onBlur={() => void commitOverlayBoxDimension('poll', 'boxHeight')}
+                      onChange={(event) =>
+                        void handleOverlayBoxDimensionInputChange(
+                          'poll',
+                          'boxHeight',
+                          event.target.value
+                        )
+                      }
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          event.preventDefault()
+                          void commitOverlayBoxDimension('poll', 'boxHeight')
+                        }
+                      }}
+                      max="1800"
+                      min="180"
+                      step="10"
+                      type="number"
+                      value={getOverlayAppearanceValue('poll', 'boxHeight')}
+                    />
+                  </label>
+
+                  <p className="network-access-note field-full">
+                    Quando uma enquete nova entrar no ar, a caixa tambem se ajusta primeiro ao
+                    conteudo antes de aceitar novos ajustes manuais.
+                  </p>
+
                   <label className="field">
                     <span>Fonte</span>
                     <select
@@ -1672,6 +2260,16 @@ function App() {
                 </div>
 
                 <div className="overlay-style-actions">
+                  <input
+                    accept="image/*"
+                    className="visually-hidden-input"
+                    id="poll-background-image-upload"
+                    onChange={(event) => void handleOverlayBackgroundFileSelected('poll', event)}
+                    type="file"
+                  />
+                  <label className="ghost-button file-upload-button" htmlFor="poll-background-image-upload">
+                    Enviar imagem da enquete
+                  </label>
                   <button
                     className="ghost-button"
                     disabled={isUpdatingOverlaySettings}
@@ -1762,22 +2360,48 @@ function App() {
 
             <div className="network-access-panel">
               <p className="network-access-note">
-                Para compartilhar o overlay na rede local, permita a conexao no firewall do Windows.
+                {isNetworkAccessEnabled
+                  ? 'O acesso pela rede local esta liberado. Se nao quiser mais expor o overlay para outros dispositivos, retire o acesso.'
+                  : 'Para compartilhar o overlay na rede local, permita a conexao no firewall do Windows.'}
               </p>
+              {recommendedNetworkAddress ? (
+                <div className="network-candidates-panel">
+                  <p className="network-access-note">
+                    IP recomendado para outros dispositivos: <strong>{recommendedNetworkAddress}</strong>
+                  </p>
+                </div>
+              ) : null}
               <div className="network-access-actions">
                 <button
                   className="ghost-button"
                   disabled={isEnablingNetworkAccess || !backendStatus?.transport?.port}
-                  onClick={() => void handleEnableNetworkAccess()}
+                  onClick={() =>
+                    void (isNetworkAccessEnabled
+                      ? handleDisableNetworkAccess()
+                      : handleEnableNetworkAccess())
+                  }
                   type="button"
                 >
-                  {isEnablingNetworkAccess ? 'Solicitando permissao...' : 'Permitir acesso na rede'}
+                  {isEnablingNetworkAccess
+                    ? 'Atualizando acesso...'
+                    : isNetworkAccessEnabled
+                      ? 'Retirar acesso da rede'
+                      : 'Permitir acesso na rede'}
                 </button>
                 {networkAccessSuccess ? (
                   <p className="vote-match">{networkAccessSuccess}</p>
                 ) : null}
                 {networkAccessError ? <p className="inline-error">{networkAccessError}</p> : null}
               </div>
+              {otherNetworkCandidates.length ? (
+                <details className="network-candidates-panel">
+                  <summary>Detalhes tecnicos de rede</summary>
+                  <p className="network-access-note">
+                    Outros IPs detectados nesta maquina:{' '}
+                    {otherNetworkCandidates.map((candidate) => candidate.address).join(', ')}
+                  </p>
+                </details>
+              ) : null}
             </div>
           </article>
         </section>
@@ -1785,6 +2409,98 @@ function App() {
 
       {activeTab === 'system' ? (
         <section className="operator-tab-panel-stack">
+            <section className="operator-hero">
+              <div className="operator-hero-copy">
+                <p className="eyebrow">Sistema e manutencao</p>
+                <h1>Gerencie conexao, rede local e suporte operacional do app</h1>
+                <p className="hero-text">
+                  Aqui ficam os recursos tecnicos de apoio: sessao do WhatsApp, runtime local, rede e informacoes do ambiente.
+                </p>
+              </div>
+
+              <div className="operator-hero-actions">
+                <span className={`status-pill status-pill-${whatsappStatusClass}`}>
+                WhatsApp {getWhatsAppConnectionLabel(whatsAppStatus?.connection)}
+              </span>
+                <button
+                  className="primary-button"
+                  disabled={
+                    isConnecting ||
+                    isDisconnectingWhatsApp ||
+                    isRecoveringRuntime ||
+                    whatsAppStatus?.connection === 'starting' ||
+                    whatsAppStatus?.connection === 'recovering' ||
+                    whatsAppStatus?.connection === 'ready'
+                  }
+                onClick={handleConnectWhatsApp}
+                type="button"
+              >
+                {isConnecting ? 'Conectando...' : 'Conectar WhatsApp'}
+              </button>
+                <button
+                  className="ghost-button"
+                  disabled={
+                    !canRecoverWhatsAppSession ||
+                    isRecoveringRuntime ||
+                    isConnecting ||
+                    isDisconnectingWhatsApp
+                  }
+                  onClick={handleResetWhatsAppRuntime}
+                  type="button"
+                >
+                  {isRecoveringRuntime ? 'Recuperando...' : 'Recuperar sessao'}
+                </button>
+                <button
+                  className="ghost-button ghost-button-danger"
+                  disabled={
+                    !canLogoutWhatsApp ||
+                    isDisconnectingWhatsApp ||
+                    isConnecting ||
+                    isRecoveringRuntime
+                  }
+                  onClick={handleLogoutWhatsApp}
+                  type="button"
+                >
+                  {isDisconnectingWhatsApp ? 'Desconectando...' : 'Desconectar WhatsApp'}
+                </button>
+              </div>
+            </section>
+
+          <section className="operator-summary">
+            <article className="summary-card">
+              <span className="summary-label">Mensagens aguardando</span>
+              <strong className="summary-value">{summaryPendingCount}</strong>
+              <span className="summary-note">Itens que ainda precisam de decisao.</span>
+            </article>
+            <article className="summary-card">
+              <span className="summary-label">Preview atual</span>
+              <strong className="summary-value">{previewItem ? previewItem.author : 'Nenhum item'}</strong>
+              <span className="summary-note">
+                {previewItem
+                  ? `${getItemTypeLabel(previewItem.type)} pronto para revisao`
+                  : 'Escolha um item para revisar na operacao.'}
+              </span>
+            </article>
+            <article className="summary-card">
+              <span className="summary-label">No ar</span>
+              <strong className="summary-value">{liveItem ? liveItem.author : 'Nada ao vivo'}</strong>
+              <span className="summary-note">
+                {liveItem
+                  ? `${getItemTypeLabel(liveItem.type)} exibido agora`
+                  : 'Nenhum item enviado para a transmissao.'}
+              </span>
+            </article>
+            <article className="summary-card">
+              <span className="summary-label">Enquete</span>
+              <strong className="summary-value">{activePoll ? activePoll.title : 'Sem enquete'}</strong>
+              <span className="summary-note">
+                {activePoll
+                  ? `${activePoll.totalVoters} voto(s) unicos registrados`
+                  : 'Crie uma enquete quando precisar abrir votacao.'}
+              </span>
+            </article>
+          </section>
+
           <article className="operator-panel">
             <div className="operator-panel-header">
               <div>
