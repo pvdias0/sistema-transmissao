@@ -1363,15 +1363,6 @@ function App() {
         </div>
 
         <div className="operator-tabs-meta">
-          <button
-            aria-label={theme === 'dark' ? 'Ativar tema claro' : 'Ativar tema escuro'}
-            className="ghost-button icon-button operator-theme-trigger"
-            onClick={handleToggleTheme}
-            title={theme === 'dark' ? 'Ativar tema claro' : 'Ativar tema escuro'}
-            type="button"
-          >
-            {theme === 'dark' ? '☀' : '☾'}
-          </button>
           {activeTab === 'operation' ? (
             <button
               aria-label="Abrir configurações da operação"
@@ -1383,6 +1374,15 @@ function App() {
               {String.fromCharCode(9881)}
             </button>
           ) : null}
+          <button
+            aria-label={theme === 'dark' ? 'Ativar tema claro' : 'Ativar tema escuro'}
+            className="ghost-button icon-button operator-theme-trigger"
+            onClick={handleToggleTheme}
+            title={theme === 'dark' ? 'Ativar tema claro' : 'Ativar tema escuro'}
+            type="button"
+          >
+            {theme === 'dark' ? '☀' : '☾'}
+          </button>
         </div>
       </section>
 

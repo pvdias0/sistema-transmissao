@@ -1,10 +1,10 @@
 {
-  "name": "vv-wp",
+  "name": "pulso",
   "version": "1.0.0",
-  "description": "An Electron application with React",
+  "description": "Mensagens e enquetes no ar para transmissões ao vivo",
   "main": "./out/main/index.js",
-  "author": "example.com",
-  "homepage": "https://electron-vite.org",
+  "author": "Pedro Vitor Dias",
+  "homepage": ".",
   "scripts": {
     "format": "prettier --write .",
     "lint": "eslint --cache .",
