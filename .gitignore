@@ -11,3 +11,7 @@ runtime/
 Thumbs.db
 .vscode/
 .idea/
+
+# Release artifacts
+releases/**/*.exe
+releases/**/*.blockmap
