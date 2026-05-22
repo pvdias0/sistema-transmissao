@@ -355,6 +355,7 @@ async function ensureBackendRunning() {
 
   env.BACKEND_DATA_ROOT = backendDataRoot
   env.ELECTRON_RUN_AS_NODE = '1'
+  env.PULSO_APP_VERSION = app.getVersion()
 
   mkdirSync(backendDataRoot, { recursive: true })
 
@@ -594,6 +595,10 @@ function registerIpcHandlers() {
   ipcMain.removeHandler('app-update:install')
   ipcMain.removeHandler('system:get-config')
   ipcMain.removeHandler('system:get-shell-info')
+  ipcMain.removeHandler('license:get-status')
+  ipcMain.removeHandler('license:activate')
+  ipcMain.removeHandler('license:validate')
+  ipcMain.removeHandler('license:deactivate')
   ipcMain.removeHandler('backend:get-health')
   ipcMain.removeHandler('backend:get-status')
   ipcMain.removeHandler('backend:get-moderation-state')
@@ -625,6 +630,69 @@ function registerIpcHandlers() {
     platform: process.platform,
     isDev: is.dev
   }))
+
+  ipcMain.handle('license:get-status', async () => {
+    try {
+      return {
+        ok: true,
+        data: await requestBackend('/api/license/status')
+      }
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : 'Falha ao consultar licença'
+      }
+    }
+  })
+
+  ipcMain.handle('license:activate', async (_event, payload) => {
+    try {
+      return {
+        ok: true,
+        data: await requestBackendWithOptions('/api/license/activate', {
+          method: 'POST',
+          body: payload
+        })
+      }
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : 'Falha ao ativar licença'
+      }
+    }
+  })
+
+  ipcMain.handle('license:validate', async () => {
+    try {
+      return {
+        ok: true,
+        data: await requestBackendWithOptions('/api/license/validate', {
+          method: 'POST'
+        })
+      }
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : 'Falha ao validar licença'
+      }
+    }
+  })
+
+  ipcMain.handle('license:deactivate', async () => {
+    try {
+      return {
+        ok: true,
+        data: await requestBackendWithOptions('/api/license/deactivate', {
+          method: 'POST'
+        })
+      }
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : 'Falha ao desativar licença'
+      }
+    }
+  })
 
   ipcMain.handle('app-update:get-state', () => ({
     ok: true,

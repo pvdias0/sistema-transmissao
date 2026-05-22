@@ -22,6 +22,12 @@ const api = {
     enableNetworkAccess: (payload) => ipcRenderer.invoke('system:enable-network-access', payload),
     disableNetworkAccess: (payload) => ipcRenderer.invoke('system:disable-network-access', payload)
   },
+  license: {
+    getStatus: () => ipcRenderer.invoke('license:get-status'),
+    activate: (payload) => ipcRenderer.invoke('license:activate', payload),
+    validate: () => ipcRenderer.invoke('license:validate'),
+    deactivate: () => ipcRenderer.invoke('license:deactivate')
+  },
   backend: {
     getHealth: () => ipcRenderer.invoke('backend:get-health'),
     getStatus: () => ipcRenderer.invoke('backend:get-status'),

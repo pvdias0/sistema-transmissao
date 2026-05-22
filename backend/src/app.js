@@ -5,6 +5,8 @@ import os from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { backendConfig, getBackendBaseUrl } from './config.js';
+import { createLicenseService } from './license-service.js';
+import { createLicenseStateStorage, getLicenseStateFilePath } from './license-state-storage.js';
 import { createMediaStorage, getMediaDirectory, getMediaRouteBase } from './media-storage.js';
 import { createOverlaySettingsStorage } from './overlay-settings-storage.js';
 import { createRuntimeStore } from './runtime-store.js';
@@ -154,6 +156,10 @@ function getNetworkBaseUrl() {
 }
 
 function getWhatsAppHealthStatus(connection) {
+  if (connection === 'locked') {
+    return 'locked';
+  }
+
   if (connection === 'ready' || connection === 'authenticated') {
     return 'ok';
   }
@@ -179,6 +185,7 @@ export async function createApp({ startedAt }) {
   const runtimeStateStorage = createRuntimeStateStorage();
   const restoredRuntimeState = await runtimeStateStorage.load();
   const overlaySettingsStorage = createOverlaySettingsStorage();
+  const licenseStateStorage = createLicenseStateStorage();
   await overlaySettingsStorage.load();
   const store = createRuntimeStore({
     initialState: restoredRuntimeState.initialState,
@@ -187,9 +194,41 @@ export async function createApp({ startedAt }) {
     }
   });
   const mediaStorage = createMediaStorage();
+  const licenseService = createLicenseService({
+    storage: licenseStateStorage
+  });
+  await licenseService.bootstrap();
   const whatsapp = createWhatsAppService({ store, mediaStorage });
   const whatsAppStartupMeta = await whatsapp.getStartupMeta();
-  const whatsAppBootstrap = await whatsapp.bootstrap();
+  let whatsAppBootstrap = {
+    attempted: false,
+    reason: 'license_locked'
+  };
+  let hasWhatsAppBootstrapAttempted = false;
+
+  async function ensureLicensedRuntimeReady() {
+    if (!licenseService.isAccessAllowed() || hasWhatsAppBootstrapAttempted) {
+      return;
+    }
+
+    hasWhatsAppBootstrapAttempted = true;
+    whatsAppBootstrap = await whatsapp.bootstrap();
+  }
+
+  if (licenseService.isAccessAllowed()) {
+    await ensureLicensedRuntimeReady();
+  }
+
+  function requireLicensedAccess(request, response, next) {
+    if (licenseService.isAccessAllowed()) {
+      return next();
+    }
+
+    return response.status(403).json({
+      error: 'Ative o Pulso com uma licença válida para continuar.',
+      license: licenseService.getSnapshot()
+    });
+  }
 
   app.disable('x-powered-by');
   app.use(express.json({ limit: '1mb' }));
@@ -211,8 +250,70 @@ export async function createApp({ startedAt }) {
       components: {
         api: 'ok',
         whatsapp: whatsappHealth
+      },
+      licensing: {
+        status: licenseService.getSnapshot().status
       }
     });
+  });
+
+  app.get('/api/license/status', (_request, response) => {
+    response.json(licenseService.getSnapshot());
+  });
+
+  app.post('/api/license/activate', async (request, response) => {
+    try {
+      const snapshot = await licenseService.activate(request.body?.licenseKey);
+      await ensureLicensedRuntimeReady();
+
+      response.status(201).json(snapshot);
+    } catch (error) {
+      response.status(error?.statusCode || 500).json({
+        error: error instanceof Error ? error.message : 'Falha ao ativar licença.'
+      });
+    }
+  });
+
+  app.post('/api/license/validate', async (_request, response) => {
+    try {
+      const snapshot = await licenseService.validate();
+
+      if (snapshot.accessAllowed) {
+        await ensureLicensedRuntimeReady();
+      } else {
+        hasWhatsAppBootstrapAttempted = false;
+        whatsAppBootstrap = {
+          attempted: false,
+          reason: 'license_locked'
+        };
+        await whatsapp.resetRuntime();
+      }
+
+      response.json(snapshot);
+    } catch (error) {
+      response.status(error?.statusCode || 500).json({
+        error: error instanceof Error ? error.message : 'Falha ao validar licença.'
+      });
+    }
+  });
+
+  app.post('/api/license/deactivate', async (_request, response) => {
+    try {
+      const snapshot = await licenseService.deactivate();
+
+      hasWhatsAppBootstrapAttempted = false;
+      whatsAppBootstrap = {
+        attempted: false,
+        reason: 'license_deactivated'
+      };
+      await whatsapp.resetRuntime();
+
+      response.json(snapshot);
+    } catch (error) {
+      response.status(error?.statusCode || 500).json({
+        error: error instanceof Error ? error.message : 'Falha ao desativar licença.'
+      });
+    }
   });
 
   app.get('/api/system/status', (_request, response) => {
@@ -222,8 +323,8 @@ export async function createApp({ startedAt }) {
     const networkBaseUrl = getNetworkBaseUrl();
     const networkCandidates = getNetworkCandidates();
     const recommendedNetworkCandidate = getRecommendedNetworkCandidate();
-
-    response.json({
+    const licenseSnapshot = licenseService.getSnapshot();
+    const basePayload = {
       app: {
         name: backendConfig.appName,
         environment: backendConfig.appEnv,
@@ -243,6 +344,46 @@ export async function createApp({ startedAt }) {
         overlayNetworkMessageUrl: networkBaseUrl ? `${networkBaseUrl}/overlay/message` : null,
         overlayNetworkPollUrl: networkBaseUrl ? `${networkBaseUrl}/overlay/poll` : null
       },
+      license: {
+        ...licenseSnapshot,
+        stateFilePath: getLicenseStateFilePath()
+      }
+    };
+
+    if (!licenseService.isAccessAllowed()) {
+      return response.json({
+        ...basePayload,
+        features: {
+          licensing: 'required',
+          moderation: 'locked',
+          whatsapp: 'locked',
+          polls: 'locked',
+          overlay: 'locked',
+          mediaImages: 'locked',
+          mediaAudio: 'locked',
+          mediaVideo: 'locked'
+        },
+        runtime: {
+          queueSize: 0,
+          liveItem: null,
+          mediaTransport: null,
+          restoredFromDisk: runtimeStatusMeta.restoredFromDisk,
+          persistedAt: runtimeStatusMeta.persistedAt,
+          stateFilePath: getRuntimeStateFilePath()
+        },
+        overlaySettings: overlaySettingsStorage.getSnapshot(),
+        whatsapp: {
+          connection: 'locked',
+          sessionName: whatsappSnapshot.sessionName,
+          autoConnectEnabled: whatsAppStartupMeta.autoConnectEnabled,
+          hasSavedSession: whatsAppStartupMeta.hasSavedSession,
+          bootstrap: whatsAppBootstrap
+        }
+      });
+    }
+
+    response.json({
+      ...basePayload,
       features: {
         moderation: 'in_progress',
         whatsapp: 'in_progress',
@@ -271,7 +412,7 @@ export async function createApp({ startedAt }) {
     });
   });
 
-  app.post('/api/system/cleanup', async (_request, response) => {
+  app.post('/api/system/cleanup', requireLicensedAccess, async (_request, response) => {
     const clearedState = store.clearOperationalState();
     await runtimeStateStorage.clearOperationalData();
     await runtimeStateStorage.persist(store.getPersistenceSnapshot());
@@ -286,11 +427,11 @@ export async function createApp({ startedAt }) {
     });
   });
 
-  app.get('/api/moderation/state', (_request, response) => {
+  app.get('/api/moderation/state', requireLicensedAccess, (_request, response) => {
     response.json(store.getSnapshot());
   });
 
-  app.get('/api/overlay/state', (_request, response) => {
+  app.get('/api/overlay/state', requireLicensedAccess, (_request, response) => {
     const snapshot = store.getSnapshot();
 
     response.setHeader('Cache-Control', 'no-store');
@@ -303,11 +444,11 @@ export async function createApp({ startedAt }) {
     });
   });
 
-  app.get('/api/overlay/settings', (_request, response) => {
+  app.get('/api/overlay/settings', requireLicensedAccess, (_request, response) => {
     response.json(overlaySettingsStorage.getSnapshot());
   });
 
-  app.post('/api/overlay/settings', async (request, response) => {
+  app.post('/api/overlay/settings', requireLicensedAccess, async (request, response) => {
     const settings = await overlaySettingsStorage.update(request.body ?? {});
     response.json(settings);
   });
@@ -324,7 +465,7 @@ export async function createApp({ startedAt }) {
     response.sendFile(join(overlayDirectory, 'index.html'));
   });
 
-  app.post('/api/moderation/messages', (request, response) => {
+  app.post('/api/moderation/messages', requireLicensedAccess, (request, response) => {
     const { author, phone, content } = request.body ?? {};
 
     if (!content?.trim()) {
@@ -337,7 +478,7 @@ export async function createApp({ startedAt }) {
     return response.status(201).json(item);
   });
 
-  app.post('/api/moderation/items/:id/approve', (request, response) => {
+  app.post('/api/moderation/items/:id/approve', requireLicensedAccess, (request, response) => {
     const item = store.approveItem(request.params.id);
 
     if (!item) {
@@ -347,7 +488,7 @@ export async function createApp({ startedAt }) {
     return response.json(item);
   });
 
-  app.post('/api/moderation/items/:id/reject', (request, response) => {
+  app.post('/api/moderation/items/:id/reject', requireLicensedAccess, (request, response) => {
     const item = store.rejectItem(request.params.id);
 
     if (!item) {
@@ -357,7 +498,7 @@ export async function createApp({ startedAt }) {
     return response.json(item);
   });
 
-  app.post('/api/moderation/items/:id/live', (request, response) => {
+  app.post('/api/moderation/items/:id/live', requireLicensedAccess, (request, response) => {
     const item = store.setLiveItem(request.params.id);
 
     if (!item) {
@@ -367,11 +508,11 @@ export async function createApp({ startedAt }) {
     return response.json(item);
   });
 
-  app.post('/api/moderation/live/clear', (_request, response) => {
+  app.post('/api/moderation/live/clear', requireLicensedAccess, (_request, response) => {
     response.json(store.clearLiveItem());
   });
 
-  app.post('/api/media/transport/command', (request, response) => {
+  app.post('/api/media/transport/command', requireLicensedAccess, (request, response) => {
     const action = String(request.body?.action || '').trim();
     const deltaSeconds = Number(request.body?.deltaSeconds);
     const targetTime = Number(request.body?.targetTime);
@@ -406,7 +547,7 @@ export async function createApp({ startedAt }) {
     return response.json(mediaTransport);
   });
 
-  app.post('/api/media/transport/telemetry', (request, response) => {
+  app.post('/api/media/transport/telemetry', requireLicensedAccess, (request, response) => {
     const itemId = String(request.body?.itemId || '').trim();
 
     if (!itemId) {
@@ -430,13 +571,13 @@ export async function createApp({ startedAt }) {
     return response.json(mediaTransport);
   });
 
-  app.get('/api/polls/active', (_request, response) => {
+  app.get('/api/polls/active', requireLicensedAccess, (_request, response) => {
     response.json({
       activePoll: store.getSnapshot().activePoll
     });
   });
 
-  app.post('/api/polls', (request, response) => {
+  app.post('/api/polls', requireLicensedAccess, (request, response) => {
     const title = request.body?.title?.trim();
     const options = Array.isArray(request.body?.options)
       ? request.body.options
@@ -490,28 +631,28 @@ export async function createApp({ startedAt }) {
     return response.status(201).json(poll);
   });
 
-  app.post('/api/polls/close', (_request, response) => {
+  app.post('/api/polls/close', requireLicensedAccess, (_request, response) => {
     const poll = store.closePoll();
     response.json({
       closedPoll: poll
     });
   });
 
-  app.get('/api/whatsapp/status', (_request, response) => {
+  app.get('/api/whatsapp/status', requireLicensedAccess, (_request, response) => {
     response.json(whatsapp.getSnapshot());
   });
 
-  app.post('/api/whatsapp/connect', async (_request, response) => {
+  app.post('/api/whatsapp/connect', requireLicensedAccess, async (_request, response) => {
     const snapshot = await whatsapp.connect();
     response.status(202).json(snapshot);
   });
 
-  app.post('/api/whatsapp/reset-runtime', async (_request, response) => {
+  app.post('/api/whatsapp/reset-runtime', requireLicensedAccess, async (_request, response) => {
     const snapshot = await whatsapp.resetRuntime();
     response.json(snapshot);
   });
 
-  app.post('/api/whatsapp/logout', async (_request, response) => {
+  app.post('/api/whatsapp/logout', requireLicensedAccess, async (_request, response) => {
     const snapshot = await whatsapp.logout();
     response.json(snapshot);
   });

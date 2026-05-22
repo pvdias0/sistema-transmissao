@@ -1979,6 +1979,20 @@ code {
   color: #ffffff;
 }
 
+.license-lock-screen {
+  display: grid;
+  place-items: start center;
+}
+
+.license-lock-panel {
+  width: min(760px, 100%);
+}
+
+.license-activation-form {
+  display: grid;
+  gap: 16px;
+}
+
 @media (max-width: 1180px) {
   .operator-summary {
     grid-template-columns: repeat(2, minmax(0, 1fr));

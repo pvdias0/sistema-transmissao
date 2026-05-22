@@ -246,9 +246,46 @@ function getAppUpdateStatusLabel(status) {
   return 'Indisponível'
 }
 
+function getLicenseStatusLabel(licenseState) {
+  if (!licenseState) return 'Carregando licença'
+  if (licenseState.status === 'active') return 'Licença ativa'
+  if (licenseState.status === 'offline_cache') return 'Ativo com cache local'
+  if (licenseState.status === 'unconfigured') return 'Servidor não configurado'
+  return 'Licença necessária'
+}
+
+function getLicenseStatusClass(licenseState) {
+  if (licenseState?.status === 'active') return 'ok'
+  if (licenseState?.status === 'offline_cache') return 'pending'
+  if (licenseState?.status === 'unconfigured') return 'pending'
+  return 'offline'
+}
+
+function formatLicenseKeyInput(value) {
+  const normalized = String(value || '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '')
+
+  if (!normalized) {
+    return ''
+  }
+
+  let body = normalized
+
+  if (body.startsWith('PULSO')) {
+    body = body.slice(5)
+  }
+
+  const parts = body.match(/.{1,6}/g) || []
+  const formattedBody = parts.slice(0, 4).join('-')
+
+  return formattedBody ? `PULSO-${formattedBody}` : 'PULSO-'
+}
+
 function App() {
   const [shellInfo, setShellInfo] = useState(null)
   const [appUpdateState, setAppUpdateState] = useState(null)
+  const [licenseState, setLicenseState] = useState(null)
   const [config, setConfig] = useState(null)
   const [backendHealth, setBackendHealth] = useState({
     ok: false,
@@ -269,6 +306,8 @@ function App() {
   const [networkAccessError, setNetworkAccessError] = useState('')
   const [networkAccessSuccess, setNetworkAccessSuccess] = useState('')
   const [appUpdateError, setAppUpdateError] = useState('')
+  const [licenseError, setLicenseError] = useState('')
+  const [licenseKeyInput, setLicenseKeyInput] = useState('')
   const [formState, setFormState] = useState(INITIAL_FORM)
   const [pollForm, setPollForm] = useState(INITIAL_POLL_FORM)
   const [receivedSearch, setReceivedSearch] = useState('')
@@ -299,12 +338,31 @@ function App() {
   const [isUpdatingOverlaySettings, setIsUpdatingOverlaySettings] = useState(false)
   const [isSendingMediaCommand, setIsSendingMediaCommand] = useState(false)
   const [isEnablingNetworkAccess, setIsEnablingNetworkAccess] = useState(false)
+  const [isActivatingLicense, setIsActivatingLicense] = useState(false)
+  const [isValidatingLicense, setIsValidatingLicense] = useState(false)
+  const [isDeactivatingLicense, setIsDeactivatingLicense] = useState(false)
 
   useEffect(() => {
     let intervalId
     let active = true
 
     async function refreshAll() {
+      const licenseResult = await window.api.license.getStatus()
+
+      if (!active) {
+        return
+      }
+
+      const nextLicenseState = licenseResult.ok ? licenseResult.data : null
+      setLicenseState(nextLicenseState)
+
+      if (!nextLicenseState?.accessAllowed) {
+        setBackendStatus(null)
+        setModerationState(null)
+        setWhatsAppStatus(null)
+        return
+      }
+
       const [healthResult, statusResult, moderationResult, whatsappResult] = await Promise.all([
         window.api.backend.getHealth(),
         window.api.backend.getStatus(),
@@ -450,6 +508,15 @@ function App() {
   }, [theme])
 
   async function refreshOperationalState() {
+    const nextLicenseState = await refreshLicenseState()
+
+    if (!nextLicenseState?.accessAllowed) {
+      setBackendStatus(null)
+      setModerationState(null)
+      setWhatsAppStatus(null)
+      return
+    }
+
     const [statusResult, moderationResult, whatsappResult] = await Promise.all([
       window.api.backend.getStatus(),
       window.api.backend.getModerationState(),
@@ -459,6 +526,72 @@ function App() {
     setBackendStatus(statusResult.ok ? statusResult.data : null)
     setModerationState(moderationResult.ok ? moderationResult.data : null)
     setWhatsAppStatus(whatsappResult.ok ? whatsappResult.data : null)
+  }
+
+  async function refreshLicenseState() {
+    const result = await window.api.license.getStatus()
+    const nextState = result.ok ? result.data : null
+
+    setLicenseState(nextState)
+
+    return nextState
+  }
+
+  async function handleActivateLicense(event) {
+    event.preventDefault()
+    setLicenseError('')
+    setIsActivatingLicense(true)
+
+    const result = await window.api.license.activate({
+      licenseKey: licenseKeyInput
+    })
+
+    setIsActivatingLicense(false)
+
+    if (!result.ok) {
+      setLicenseError(result.error)
+      return
+    }
+
+    setLicenseKeyInput('')
+    setLicenseState(result.data)
+    await refreshOperationalState()
+  }
+
+  async function handleValidateLicense() {
+    setLicenseError('')
+    setIsValidatingLicense(true)
+
+    const result = await window.api.license.validate()
+
+    setIsValidatingLicense(false)
+
+    if (!result.ok) {
+      setLicenseError(result.error)
+      return
+    }
+
+    setLicenseState(result.data)
+    await refreshOperationalState()
+  }
+
+  async function handleDeactivateLicense() {
+    setLicenseError('')
+    setIsDeactivatingLicense(true)
+
+    const result = await window.api.license.deactivate()
+
+    setIsDeactivatingLicense(false)
+
+    if (!result.ok) {
+      setLicenseError(result.error)
+      return
+    }
+
+    setLicenseState(result.data)
+    setBackendStatus(null)
+    setModerationState(null)
+    setWhatsAppStatus(null)
   }
 
   async function handleSetLiveItem(itemId) {
@@ -1122,6 +1255,15 @@ function App() {
   )
   const isNetworkAccessEnabled = backendStatus?.transport?.host === '0.0.0.0'
   const summaryPendingCount = receivedItems.filter((item) => item.status === 'pending').length
+  const isLicenseAccessAllowed = Boolean(licenseState?.accessAllowed)
+  const licenseStatusLabel = getLicenseStatusLabel(licenseState)
+  const licenseStatusClass = getLicenseStatusClass(licenseState)
+  const hasStoredLicense = Boolean(licenseState?.license?.keyMasked)
+  const licenseExpiryLabel = licenseState?.license?.expiresAt
+    ? formatTimestamp(licenseState.license.expiresAt)
+    : 'Sem expiração definida'
+  const canSubmitLicenseActivation =
+    !isActivatingLicense && licenseKeyInput.trim().replace(/-/g, '').length > 5
 
   function renderOperationQueuePanel({
     title,
@@ -1421,47 +1563,54 @@ function App() {
   return (
     <main className="app-shell operator-shell" data-theme={theme}>
       <section className="operator-tabs-top">
-        <div className="operator-tabs">
-          <button
-            className={`operator-tab-button ${activeTab === 'operation' ? 'is-active' : ''}`}
-            onClick={() => setActiveTab('operation')}
-            type="button"
-          >
-            Operação
-          </button>
-          <button
-            className={`operator-tab-button ${activeTab === 'polls' ? 'is-active' : ''}`}
-            onClick={() => setActiveTab('polls')}
-            type="button"
-          >
-            Enquete
-          </button>
-          <button
-            className={`operator-tab-button ${activeTab === 'overlay' ? 'is-active' : ''}`}
-            onClick={() => setActiveTab('overlay')}
-            type="button"
-          >
-            Overlay
-          </button>
-          <button
-            className={`operator-tab-button ${activeTab === 'system' ? 'is-active' : ''}`}
-            onClick={() => setActiveTab('system')}
-            type="button"
-          >
-            Sistema
-          </button>
-        </div>
+        {isLicenseAccessAllowed ? (
+          <div className="operator-tabs">
+            <button
+              className={`operator-tab-button ${activeTab === 'operation' ? 'is-active' : ''}`}
+              onClick={() => setActiveTab('operation')}
+              type="button"
+            >
+              Operação
+            </button>
+            <button
+              className={`operator-tab-button ${activeTab === 'polls' ? 'is-active' : ''}`}
+              onClick={() => setActiveTab('polls')}
+              type="button"
+            >
+              Enquete
+            </button>
+            <button
+              className={`operator-tab-button ${activeTab === 'overlay' ? 'is-active' : ''}`}
+              onClick={() => setActiveTab('overlay')}
+              type="button"
+            >
+              Overlay
+            </button>
+            <button
+              className={`operator-tab-button ${activeTab === 'system' ? 'is-active' : ''}`}
+              onClick={() => setActiveTab('system')}
+              type="button"
+            >
+              Sistema
+            </button>
+          </div>
+        ) : (
+          <div />
+        )}
 
         <div className="operator-tabs-meta">
-          <button
-            aria-label="Abrir configurações da operação"
-            className="ghost-button icon-button operator-settings-trigger"
-            onClick={() => setIsOperationSettingsOpen(true)}
-            title="Configurações da operação"
-            type="button"
-          >
-            {String.fromCharCode(9881)}
-          </button>
+          {isLicenseAccessAllowed ? (
+            <button
+              aria-label="Abrir configurações da operação"
+              className="ghost-button icon-button operator-settings-trigger"
+              disabled={!isLicenseAccessAllowed}
+              onClick={() => setIsOperationSettingsOpen(true)}
+              title="Configurações da operação"
+              type="button"
+            >
+              {String.fromCharCode(9881)}
+            </button>
+          ) : null}
           <button
             aria-label={theme === 'dark' ? 'Ativar tema claro' : 'Ativar tema escuro'}
             className="ghost-button icon-button operator-theme-trigger"
@@ -1483,7 +1632,112 @@ function App() {
         </section>
       ) : null}
 
-      {activeTab === 'operation' ? (
+      {!isLicenseAccessAllowed ? (
+        <section className="license-lock-screen">
+          <article className="operator-panel license-lock-panel">
+            <div className="operator-panel-header">
+              <div>
+                <p className="card-kicker">Acesso</p>
+                <h2>Ative o Pulso</h2>
+                <p className="panel-subtitle">
+                  Esta instalação fica travada até receber uma chave válida. Sem ativação, as
+                  mensagens, o WhatsApp e a transmissão permanecem bloqueados.
+                </p>
+              </div>
+              <span className={`status-pill status-pill-${licenseStatusClass}`}>
+                {licenseStatusLabel}
+              </span>
+            </div>
+
+            {licenseError ? <p className="inline-error">{licenseError}</p> : null}
+            {licenseState?.error ? <p className="inline-error">{licenseState.error}</p> : null}
+
+            <dl className="definition-list compact">
+              <div>
+                <dt>Dispositivo</dt>
+                <dd>{licenseState?.deviceName || 'Carregando...'}</dd>
+              </div>
+              <div>
+                <dt>Machine ID</dt>
+                <dd>{licenseState?.machineId || 'Gerando...'}</dd>
+              </div>
+              <div>
+                <dt>Licença atual</dt>
+                <dd>{licenseState?.license?.keyMasked || 'Nenhuma ativação local'}</dd>
+              </div>
+              <div>
+                <dt>Validade</dt>
+                <dd>{hasStoredLicense ? licenseExpiryLabel : 'Sem licença validada'}</dd>
+              </div>
+              <div>
+                <dt>Última validação online</dt>
+                <dd>
+                  {licenseState?.lastValidatedOnlineAt
+                    ? formatTimestamp(licenseState.lastValidatedOnlineAt)
+                    : 'Ainda não validada'}
+                </dd>
+              </div>
+              <div>
+                <dt>Cache local até</dt>
+                <dd>
+                  {licenseState?.offlineGraceExpiresAt
+                    ? formatTimestamp(licenseState.offlineGraceExpiresAt)
+                    : 'Sem cache disponível'}
+                </dd>
+              </div>
+            </dl>
+
+            <form className="license-activation-form" onSubmit={handleActivateLicense}>
+              <label className="field field-full">
+                <span>Chave de acesso</span>
+                <input
+                  autoComplete="off"
+                  onChange={(event) => setLicenseKeyInput(formatLicenseKeyInput(event.target.value))}
+                  placeholder="Ex.: PULSO-AB12CD-EF34GH-IJ56KL-MN78OP"
+                  type="text"
+                  value={licenseKeyInput}
+                />
+              </label>
+              <div className="status-block-actions">
+                <button
+                  className="primary-button"
+                  disabled={!canSubmitLicenseActivation}
+                  type="submit"
+                >
+                  {isActivatingLicense ? 'Ativando...' : 'Ativar neste dispositivo'}
+                </button>
+                {hasStoredLicense ? (
+                  <button
+                    className="ghost-button"
+                    disabled={isValidatingLicense || isActivatingLicense || isDeactivatingLicense}
+                    onClick={() => void handleValidateLicense()}
+                    type="button"
+                  >
+                    {isValidatingLicense ? 'Validando...' : 'Validar novamente'}
+                  </button>
+                ) : null}
+                {hasStoredLicense ? (
+                  <button
+                    className="ghost-button ghost-button-danger"
+                    disabled={isDeactivatingLicense || isActivatingLicense || isValidatingLicense}
+                    onClick={() => void handleDeactivateLicense()}
+                    type="button"
+                  >
+                    {isDeactivatingLicense ? 'Desativando...' : 'Remover deste dispositivo'}
+                  </button>
+                ) : null}
+              </div>
+            </form>
+
+            <p className="operation-config-note">
+              A chave é validada online e depois fica em cache local por tempo limitado. Se a
+              licença expirar ou for revogada, esta tela volta a bloquear o app.
+            </p>
+          </article>
+        </section>
+      ) : null}
+
+      {isLicenseAccessAllowed && activeTab === 'operation' ? (
         <section className="operator-tab-panel-stack">
           <section className="operation-top-grid">
             <article className="operator-panel">
@@ -1951,7 +2205,7 @@ function App() {
         </section>
       ) : null}
 
-      {activeTab === 'polls' ? (
+      {isLicenseAccessAllowed && activeTab === 'polls' ? (
         <section className="operator-tab-panel-stack">
           <article className="operator-panel">
             <div className="operator-panel-header">
@@ -2091,7 +2345,7 @@ function App() {
         </section>
       ) : null}
 
-      {activeTab === 'overlay' ? (
+      {isLicenseAccessAllowed && activeTab === 'overlay' ? (
         <section className="operator-tab-panel-stack">
           <article className="operator-panel">
             <div className="operator-panel-header">
@@ -2731,7 +2985,7 @@ function App() {
         </section>
       ) : null}
 
-      {activeTab === 'system' ? (
+      {isLicenseAccessAllowed && activeTab === 'system' ? (
         <section className="operator-tab-panel-stack">
           <section className="operator-summary">
             <article className="summary-card">
@@ -2786,6 +3040,64 @@ function App() {
             </div>
 
             <div className="operator-details-grid operator-details-grid-open">
+              <section className="status-block">
+                <div className="status-block-header">
+                  <h3>Licença</h3>
+                  <span className={`status-pill status-pill-${licenseStatusClass}`}>
+                    {licenseStatusLabel}
+                  </span>
+                </div>
+                {licenseError ? <p className="inline-error">{licenseError}</p> : null}
+                <dl className="definition-list compact">
+                  <div>
+                    <dt>Chave</dt>
+                    <dd>{licenseState?.license?.keyMasked || 'Nenhuma ativação local'}</dd>
+                  </div>
+                  <div>
+                    <dt>Plano</dt>
+                    <dd>{licenseState?.license?.label || 'Sem identificação'}</dd>
+                  </div>
+                  <div>
+                    <dt>Validade</dt>
+                    <dd>{licenseExpiryLabel}</dd>
+                  </div>
+                  <div>
+                    <dt>Última validação online</dt>
+                    <dd>
+                      {licenseState?.lastValidatedOnlineAt
+                        ? formatTimestamp(licenseState.lastValidatedOnlineAt)
+                        : 'Ainda não validada'}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Cache local até</dt>
+                    <dd>
+                      {licenseState?.offlineGraceExpiresAt
+                        ? formatTimestamp(licenseState.offlineGraceExpiresAt)
+                        : 'Sem cache local'}
+                    </dd>
+                  </div>
+                </dl>
+                <div className="status-block-actions">
+                  <button
+                    className="ghost-button"
+                    disabled={isValidatingLicense || isDeactivatingLicense}
+                    onClick={() => void handleValidateLicense()}
+                    type="button"
+                  >
+                    {isValidatingLicense ? 'Validando...' : 'Validar agora'}
+                  </button>
+                  <button
+                    className="ghost-button ghost-button-danger"
+                    disabled={isDeactivatingLicense || isValidatingLicense}
+                    onClick={() => void handleDeactivateLicense()}
+                    type="button"
+                  >
+                    {isDeactivatingLicense ? 'Desativando...' : 'Desativar neste dispositivo'}
+                  </button>
+                </div>
+              </section>
+
               <section className="status-block status-block-whatsapp">
                 <div className="status-block-header">
                   <h3>WhatsApp</h3>
@@ -3015,7 +3327,7 @@ function App() {
         </section>
       ) : null}
 
-      {isOperationSettingsOpen ? (
+      {isLicenseAccessAllowed && isOperationSettingsOpen ? (
         <div
           className="operation-modal-backdrop"
           onClick={() => setIsOperationSettingsOpen(false)}
