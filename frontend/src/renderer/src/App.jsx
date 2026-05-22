@@ -441,9 +441,11 @@ function App() {
     }
 
     document.body.dataset.theme = theme
+    document.documentElement.dataset.theme = theme
 
     return () => {
       delete document.body.dataset.theme
+      delete document.documentElement.dataset.theme
     }
   }, [theme])
 
@@ -1451,17 +1453,15 @@ function App() {
         </div>
 
         <div className="operator-tabs-meta">
-          {activeTab === 'operation' ? (
-            <button
-              aria-label="Abrir configurações da operação"
-              className="ghost-button icon-button operator-settings-trigger"
-              onClick={() => setIsOperationSettingsOpen(true)}
-              title="Configurações da operação"
-              type="button"
-            >
-              {String.fromCharCode(9881)}
-            </button>
-          ) : null}
+          <button
+            aria-label="Abrir configurações da operação"
+            className="ghost-button icon-button operator-settings-trigger"
+            onClick={() => setIsOperationSettingsOpen(true)}
+            title="Configurações da operação"
+            type="button"
+          >
+            {String.fromCharCode(9881)}
+          </button>
           <button
             aria-label={theme === 'dark' ? 'Ativar tema claro' : 'Ativar tema escuro'}
             className="ghost-button icon-button operator-theme-trigger"
@@ -2976,7 +2976,9 @@ function App() {
                     </dd>
                   </div>
                 </dl>
-                {appUpdateState?.error ? <p className="inline-error">{appUpdateState.error}</p> : null}
+                {appUpdateState?.error ? (
+                  <p className="inline-error">{appUpdateState.error}</p>
+                ) : null}
                 {isUpdateUnavailable ? (
                   <p className="network-access-note">
                     A atualização automática funciona apenas no aplicativo instalado.
@@ -3002,11 +3004,7 @@ function App() {
                     </button>
                   ) : null}
                   {isUpdateReadyToInstall ? (
-                    <button
-                      className="primary-button"
-                      onClick={handleInstallUpdate}
-                      type="button"
-                    >
+                    <button className="primary-button" onClick={handleInstallUpdate} type="button">
                       Reiniciar e atualizar
                     </button>
                   ) : null}

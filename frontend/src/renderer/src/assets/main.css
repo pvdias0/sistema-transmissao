@@ -1,5 +1,10 @@
 @import './base.css';
 
+html {
+  min-height: 100%;
+  background-color: #09131a;
+}
+
 body {
   margin: 0;
   min-width: 0;
@@ -19,6 +24,10 @@ body[data-theme='light'] {
     radial-gradient(circle at top right, rgba(255, 194, 102, 0.14), transparent 26%),
     linear-gradient(180deg, #f4fbf8 0%, #edf6f4 36%, #e7efee 100%);
   color: #16242c;
+}
+
+html[data-theme='light'] {
+  background-color: #e7efee;
 }
 
 #root {
@@ -1537,7 +1546,10 @@ body::-webkit-scrollbar,
   height: 10px;
 }
 
-body::-webkit-scrollbar-track,
+body::-webkit-scrollbar-track {
+  background: rgba(9, 19, 26, 0.92);
+}
+
 .operator-queue-scroll::-webkit-scrollbar-track,
 .operation-modal-content::-webkit-scrollbar-track {
   background: transparent;
@@ -1825,6 +1837,10 @@ body[data-theme='light']::-webkit-scrollbar-thumb,
 .app-shell[data-theme='light'] .operator-queue-scroll::-webkit-scrollbar-thumb,
 .app-shell[data-theme='light'] .operation-modal-content::-webkit-scrollbar-thumb {
   background: rgba(74, 108, 118, 0.26);
+}
+
+body[data-theme='light']::-webkit-scrollbar-track {
+  background: rgba(231, 239, 238, 0.96);
 }
 
 body[data-theme='light']::-webkit-scrollbar-thumb:hover,
