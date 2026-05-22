@@ -10,7 +10,24 @@ import icon from '../../resources/logo-pulso-260.png?asset'
 const { autoUpdater } = electronUpdater
 const backendBaseUrl = process.env.BACKEND_BASE_URL || 'http://127.0.0.1:47831'
 const workspaceRoot = join(__dirname, '../../..')
+const DEFAULT_DEV_LICENSE_API_BASE_URL = 'http://127.0.0.1:47910'
+const DEFAULT_PRODUCTION_LICENSE_API_BASE_URL = 'https://pulso-api.pvapps.com.br'
 let mainWindowRef = null
+
+function resolveLicenseApiBaseUrl() {
+  const explicitUrl =
+    process.env.PULSO_LICENSE_API_BASE_URL?.trim() || process.env.LICENSE_API_BASE_URL?.trim()
+
+  if (explicitUrl) {
+    return explicitUrl
+  }
+
+  if (is.dev) {
+    return DEFAULT_DEV_LICENSE_API_BASE_URL
+  }
+
+  return DEFAULT_PRODUCTION_LICENSE_API_BASE_URL
+}
 
 function getBackendSourceRoot() {
   return app.isPackaged ? join(process.resourcesPath, 'backend') : join(workspaceRoot, 'backend')
@@ -356,6 +373,7 @@ async function ensureBackendRunning() {
   env.BACKEND_DATA_ROOT = backendDataRoot
   env.ELECTRON_RUN_AS_NODE = '1'
   env.PULSO_APP_VERSION = app.getVersion()
+  env.LICENSE_API_BASE_URL = resolveLicenseApiBaseUrl()
 
   mkdirSync(backendDataRoot, { recursive: true })
 
@@ -621,7 +639,8 @@ function registerIpcHandlers() {
   ipcMain.removeHandler('polls:close')
 
   ipcMain.handle('system:get-config', () => ({
-    backendBaseUrl
+    backendBaseUrl,
+    licenseApiBaseUrl: resolveLicenseApiBaseUrl()
   }))
 
   ipcMain.handle('system:get-shell-info', () => ({
