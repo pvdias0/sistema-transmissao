@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { access } from 'node:fs/promises';
 import { mkdir, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -32,8 +33,52 @@ const STALE_RUNTIME_ENTRIES = [
   join('Default', 'LOCK')
 ];
 
+function getBrowserExecutableCandidates() {
+  const explicitExecutablePath = process.env.CHROME_EXECUTABLE_PATH?.trim();
+
+  if (explicitExecutablePath) {
+    return [explicitExecutablePath];
+  }
+
+  if (process.platform === 'win32') {
+    const candidates = [];
+    const windowsRoots = [
+      process.env.LOCALAPPDATA,
+      process.env.PROGRAMFILES,
+      process.env['PROGRAMFILES(X86)']
+    ].filter(Boolean);
+
+    for (const root of windowsRoots) {
+      candidates.push(join(root, 'Google', 'Chrome', 'Application', 'chrome.exe'));
+      candidates.push(join(root, 'Microsoft', 'Edge', 'Application', 'msedge.exe'));
+    }
+
+    return candidates;
+  }
+
+  if (process.platform === 'darwin') {
+    return [
+      '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+      '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge'
+    ];
+  }
+
+  return [
+    '/usr/bin/google-chrome-stable',
+    '/usr/bin/google-chrome',
+    '/usr/bin/chromium-browser',
+    '/usr/bin/chromium',
+    '/usr/bin/microsoft-edge'
+  ];
+}
+
+function resolveBrowserExecutablePath() {
+  const candidates = getBrowserExecutableCandidates();
+  return candidates.find((candidate) => candidate && existsSync(candidate)) || undefined;
+}
+
 function getBrowserConfig() {
-  const executablePath = process.env.CHROME_EXECUTABLE_PATH?.trim();
+  const executablePath = resolveBrowserExecutablePath();
 
   return {
     headless: true,
