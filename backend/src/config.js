@@ -30,7 +30,7 @@ export const backendConfig = {
 };
 
 export const licenseConfig = {
-  apiBaseUrl: process.env.LICENSE_API_BASE_URL?.trim() || '',
+  apiBaseUrl: process.env.LICENSE_API_BASE_URL?.trim() || 'https://pulso-api.pvapps.com.br',
   offlineGraceHours: parsePositiveInteger(
     process.env.LICENSE_OFFLINE_GRACE_HOURS,
     DEFAULT_LICENSE_OFFLINE_GRACE_HOURS
