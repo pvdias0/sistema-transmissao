@@ -1,5 +1,5 @@
 {
-  "name": "Pulso",
+  "name": "pulso",
   "version": "1.1.2",
   "description": "Mensagens e enquetes no ar para transmissões ao vivo",
   "main": "./out/main/index.js",
