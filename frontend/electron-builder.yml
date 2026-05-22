@@ -11,12 +11,8 @@ files:
 asarUnpack:
   - resources/**
 extraResources:
-  - from: ../backend/package.json
-    to: backend/package.json
-  - from: ../backend/src
-    to: backend/src
-  - from: ../backend/node_modules
-    to: backend/node_modules
+  - from: .backend-dist
+    to: backend
 win:
   icon: build/icon.ico
   executableName: Pulso

@@ -23,6 +23,12 @@ const STALE_RUNTIME_ENTRIES = [
   'SingletonLock',
   'SingletonCookie',
   'SingletonSocket',
+  'Cache',
+  'Code Cache',
+  'GPUCache',
+  'DawnCache',
+  'GrShaderCache',
+  'GraphiteDawnCache',
   join('Default', 'LOCK')
 ];
 
@@ -32,7 +38,17 @@ function getBrowserConfig() {
   return {
     headless: true,
     executablePath: executablePath || undefined,
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+      '--disable-software-rasterizer',
+      '--disable-gpu-shader-disk-cache',
+      '--disable-application-cache',
+      '--disk-cache-size=0',
+      '--media-cache-size=0'
+    ]
   };
 }
 

@@ -283,6 +283,7 @@ function formatLicenseKeyInput(value) {
 }
 
 function App() {
+  const [isAppReady, setIsAppReady] = useState(false)
   const [shellInfo, setShellInfo] = useState(null)
   const [appUpdateState, setAppUpdateState] = useState(null)
   const [licenseState, setLicenseState] = useState(null)
@@ -400,6 +401,7 @@ function App() {
       setAppUpdateState(nextAppUpdateState.ok ? nextAppUpdateState.data : null)
 
       await refreshAll()
+      setIsAppReady(true)
       intervalId = window.setInterval(refreshAll, REFRESH_INTERVAL_MS)
     }
 
@@ -426,6 +428,28 @@ function App() {
       }
     }
   }, [])
+
+  useEffect(() => {
+    if (!isAppReady) {
+      return undefined
+    }
+
+    const splashElement = document.getElementById('app-loading-screen')
+
+    if (!splashElement) {
+      return undefined
+    }
+
+    splashElement.classList.add('is-hidden')
+
+    const timeoutId = window.setTimeout(() => {
+      splashElement.remove()
+    }, 320)
+
+    return () => {
+      window.clearTimeout(timeoutId)
+    }
+  }, [isAppReady])
 
   useEffect(() => {
     const liveTransport = moderationState?.mediaTransport
@@ -3165,6 +3189,9 @@ function App() {
                     </button>
                   ) : null}
                 </div>
+                {whatsAppStatus?.lastError ? (
+                  <p className="inline-error">{whatsAppStatus.lastError}</p>
+                ) : null}
                 {whatsAppStatus?.qrCodeDataUrl ? (
                   <img
                     alt="QR code do WhatsApp"
