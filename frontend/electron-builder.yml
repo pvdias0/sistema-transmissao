@@ -11,15 +11,12 @@ files:
 asarUnpack:
   - resources/**
 extraResources:
-  - from: ../backend
-    to: backend
-    filter:
-      - '**/*'
-      - '!.wwebjs_auth{,/**}'
-      - '!.wwebjs_cache{,/**}'
-      - '!runtime{,/**}'
-      - '!.env'
-      - '!AGENTS.md'
+  - from: ../backend/package.json
+    to: backend/package.json
+  - from: ../backend/src
+    to: backend/src
+  - from: ../backend/node_modules
+    to: backend/node_modules
 win:
   icon: build/icon.ico
   executableName: Pulso
