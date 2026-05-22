@@ -41,7 +41,7 @@ async function hydrateReleaseLink() {
     if (release.version) {
       downloadVersion.textContent = `v${release.version}`
       downloadNote.textContent =
-        'O botão de download está lendo automaticamente a release publicada no servidor de updates.'
+        'Clique no botão para baixar a última versão disponível.'
       return
     }
 
