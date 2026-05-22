@@ -51,4 +51,4 @@ appImage:
 npmRebuild: false
 publish:
   provider: generic
-  url: https://updates.pvapps.com.br/pulso/win
+  url: https://updates.pvapps.com.br
