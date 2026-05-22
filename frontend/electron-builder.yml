@@ -10,8 +10,18 @@ files:
   - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
 asarUnpack:
   - resources/**
+extraResources:
+  - from: ../backend
+    to: backend
+    filter:
+      - '**/*'
+      - '!.wwebjs_auth{,/**}'
+      - '!.wwebjs_cache{,/**}'
+      - '!runtime{,/**}'
+      - '!.env'
+      - '!AGENTS.md'
 win:
-  icon: resources/logo-pulso-260.png
+  icon: build/icon.ico
   executableName: Pulso
 nsis:
   oneClick: false
@@ -19,6 +29,9 @@ nsis:
   shortcutName: ${productName}
   uninstallDisplayName: ${productName}
   createDesktopShortcut: true
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+  installerHeaderIcon: build/icon.ico
 mac:
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:

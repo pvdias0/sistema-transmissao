@@ -1,15 +1,29 @@
 import { app, shell, BrowserWindow, ipcMain } from 'electron'
 import { execFile, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
-import { existsSync } from 'node:fs'
+import { existsSync, mkdirSync } from 'node:fs'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/logo-pulso-260.png?asset'
 
 const backendBaseUrl = process.env.BACKEND_BASE_URL || 'http://127.0.0.1:47831'
 const workspaceRoot = join(__dirname, '../../..')
-const backendRoot = join(workspaceRoot, 'backend')
-const backendEntryPath = join(backendRoot, 'src', 'server.js')
+
+function getBackendSourceRoot() {
+  return app.isPackaged ? join(process.resourcesPath, 'backend') : join(workspaceRoot, 'backend')
+}
+
+function getBackendDataRoot() {
+  if (!app.isPackaged) {
+    return getBackendSourceRoot()
+  }
+
+  return join(app.getPath('userData'), 'backend-data')
+}
+
+function getBackendEntryPath() {
+  return join(getBackendSourceRoot(), 'src', 'server.js')
+}
 
 let backendChildProcess = null
 let isBackendStarting = false
@@ -86,6 +100,10 @@ async function ensureBackendRunning() {
     return
   }
 
+  const backendRoot = getBackendSourceRoot()
+  const backendDataRoot = getBackendDataRoot()
+  const backendEntryPath = getBackendEntryPath()
+
   if (!existsSync(backendEntryPath)) {
     console.warn(`Backend local nao encontrado em ${backendEntryPath}`)
     return
@@ -99,8 +117,13 @@ async function ensureBackendRunning() {
     env.HOST = backendHostOverride
   }
 
-  const childProcess = spawn('node', ['src/server.js'], {
-    cwd: backendRoot,
+  env.BACKEND_DATA_ROOT = backendDataRoot
+  env.ELECTRON_RUN_AS_NODE = '1'
+
+  mkdirSync(backendDataRoot, { recursive: true })
+
+  const childProcess = spawn(process.execPath, [backendEntryPath], {
+    cwd: backendDataRoot,
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
     env

@@ -12,9 +12,10 @@ const { Client, LocalAuth } = whatsAppWeb;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const backendRoot = join(__dirname, '..');
-const runtimeDir = join(backendRoot, 'runtime');
-const authDir = join(backendRoot, '.wwebjs_auth');
-const cacheDir = join(backendRoot, '.wwebjs_cache');
+const backendDataRoot = process.env.BACKEND_DATA_ROOT?.trim() || backendRoot;
+const runtimeDir = join(backendDataRoot, 'runtime');
+const authDir = join(backendDataRoot, '.wwebjs_auth');
+const cacheDir = join(backendDataRoot, '.wwebjs_cache');
 const execFileAsync = promisify(execFile);
 const STALE_RUNTIME_ENTRIES = [
   'DevToolsActivePort',

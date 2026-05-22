@@ -26,14 +26,7 @@ const INITIAL_POLL_FORM = {
   options: [createPollOptionDraft(0), createPollOptionDraft(1)]
 }
 
-const OVERLAY_FONT_OPTIONS = [
-  'Segoe UI',
-  'Arial',
-  'Verdana',
-  'Tahoma',
-  'Trebuchet MS',
-  'Georgia'
-]
+const OVERLAY_FONT_OPTIONS = ['Segoe UI', 'Arial', 'Verdana', 'Tahoma', 'Trebuchet MS', 'Georgia']
 
 function formatBooleanLabel(value) {
   return value ? 'Ativo' : 'Inativo'
@@ -147,9 +140,10 @@ function getBlockedWordMatches(item, blockedWords) {
       return false
     }
 
-    return blockedWords.findIndex(
-      (candidate) => normalizeSearchText(candidate) === normalizedWord
-    ) === index && normalizedContent.includes(normalizedWord)
+    return (
+      blockedWords.findIndex((candidate) => normalizeSearchText(candidate) === normalizedWord) ===
+        index && normalizedContent.includes(normalizedWord)
+    )
   })
 }
 
@@ -358,10 +352,7 @@ function App() {
     }
 
     void refreshMediaTransportState()
-    intervalId = window.setInterval(
-      refreshMediaTransportState,
-      MEDIA_TRANSPORT_REFRESH_INTERVAL_MS
-    )
+    intervalId = window.setInterval(refreshMediaTransportState, MEDIA_TRANSPORT_REFRESH_INTERVAL_MS)
 
     return () => {
       active = false
@@ -774,7 +765,9 @@ function App() {
 
   async function commitOverlayBoxDimension(target, key) {
     const rawValue =
-      overlayAppearanceDrafts?.[target]?.[key] ?? backendStatus?.overlaySettings?.[target]?.[key] ?? ''
+      overlayAppearanceDrafts?.[target]?.[key] ??
+      backendStatus?.overlaySettings?.[target]?.[key] ??
+      ''
     const parsedValue = Number.parseInt(rawValue, 10)
 
     if (!Number.isInteger(parsedValue)) {
@@ -992,7 +985,9 @@ function App() {
   const queue = moderationState?.moderationQueue || []
   const liveItem = moderationState?.liveItem
   const blockedWords = parseBlockedWords(blockedWordsText)
-  const receivedItems = queue.filter((item) => item.status !== 'approved' && item.status !== 'on_air')
+  const receivedItems = queue.filter(
+    (item) => item.status !== 'approved' && item.status !== 'on_air'
+  )
   const approvedItems = queue.filter((item) => item.status === 'approved')
   const filteredReceivedItems = receivedItems.filter(
     (item) => itemMatchesSearch(item, receivedSearch) && matchesTypeFilter(item, receivedTypeFilter)
@@ -1056,47 +1051,50 @@ function App() {
     onTypeFilterChange,
     emptyMessage
   }) {
-      return (
-        <article
-          className={`operator-panel operation-list-panel ${items.length ? '' : 'operation-list-panel-empty'}`}
-        >
+    return (
+      <article
+        className={`operator-panel operation-list-panel ${items.length ? '' : 'operation-list-panel-empty'}`}
+      >
         <div className="operator-panel-header">
           <div>
             <p className="card-kicker">{kicker}</p>
             <h2>{title}</h2>
             <p className="panel-subtitle">{subtitle}</p>
-            </div>
-            <span className="mini-badge">{items.length} item(ns)</span>
           </div>
+          <span className="mini-badge">{items.length} item(ns)</span>
+        </div>
 
-          {showControls ? (
-            <div className="operator-queue-toolbar">
-              <label className="queue-search-field">
-                <span>Buscar nesta lista</span>
-                <input
-                  onChange={(event) => onSearchChange(event.target.value)}
-                  placeholder="Procure por nome, grupo, numero ou trecho da mensagem"
-                  type="text"
-                  value={searchValue}
-                />
-              </label>
-              <label className="queue-type-filter-field">
-                <span>Tipo</span>
-                <select onChange={(event) => onTypeFilterChange(event.target.value)} value={typeFilter}>
-                  <option value="all">Todos</option>
-                  <option value="text">Texto</option>
-                  <option value="image">Imagem</option>
-                  <option value="audio">Audio</option>
-                  <option value="video">Video</option>
-                </select>
-              </label>
-              {searchValue ? (
-                <button className="ghost-button" onClick={() => onSearchChange('')} type="button">
-                  Limpar busca
-                </button>
-              ) : null}
-            </div>
-          ) : null}
+        {showControls ? (
+          <div className="operator-queue-toolbar">
+            <label className="queue-search-field">
+              <span>Buscar nesta lista</span>
+              <input
+                onChange={(event) => onSearchChange(event.target.value)}
+                placeholder="Procure por nome, grupo, numero ou trecho da mensagem"
+                type="text"
+                value={searchValue}
+              />
+            </label>
+            <label className="queue-type-filter-field">
+              <span>Tipo</span>
+              <select
+                onChange={(event) => onTypeFilterChange(event.target.value)}
+                value={typeFilter}
+              >
+                <option value="all">Todos</option>
+                <option value="text">Texto</option>
+                <option value="image">Imagem</option>
+                <option value="audio">Audio</option>
+                <option value="video">Video</option>
+              </select>
+            </label>
+            {searchValue ? (
+              <button className="ghost-button" onClick={() => onSearchChange('')} type="button">
+                Limpar busca
+              </button>
+            ) : null}
+          </div>
+        ) : null}
 
         {items.length ? (
           <div className="operator-queue-scroll operator-queue-scroll-compact">
@@ -1153,10 +1151,16 @@ function App() {
                               <div className="queue-quick-actions">
                                 <button
                                   className="ghost-button ghost-button-compact queue-quick-action queue-quick-action-approve"
-                                  disabled={isActing || item.status === 'approved' || item.status === 'on_air'}
+                                  disabled={
+                                    isActing ||
+                                    item.status === 'approved' ||
+                                    item.status === 'on_air'
+                                  }
                                   onClick={(event) => {
                                     event.stopPropagation()
-                                    void runItemAction(() => window.api.backend.approveItem(item.id))
+                                    void runItemAction(() =>
+                                      window.api.backend.approveItem(item.id)
+                                    )
                                   }}
                                   type="button"
                                 >
@@ -1286,7 +1290,8 @@ function App() {
             </p>
             {recommendedNetworkAddress ? (
               <p className="network-access-note">
-                IP recomendado para outros dispositivos: <strong>{recommendedNetworkAddress}</strong>
+                IP recomendado para outros dispositivos:{' '}
+                <strong>{recommendedNetworkAddress}</strong>
               </p>
             ) : null}
             <div className="network-access-actions">
@@ -1386,7 +1391,7 @@ function App() {
         </div>
       </section>
 
-      {(whatsAppError || actionError || overlaySettingsError || pollError) ? (
+      {whatsAppError || actionError || overlaySettingsError || pollError ? (
         <section className="operator-alerts">
           {whatsAppError ? <p className="inline-error">{whatsAppError}</p> : null}
           {actionError ? <p className="inline-error">{actionError}</p> : null}
@@ -1404,7 +1409,8 @@ function App() {
                   <p className="card-kicker">Revisao</p>
                   <h2>Preview</h2>
                   <p className="panel-subtitle">
-                    Revise texto, imagem, audio ou video antes de aprovar, rejeitar ou colocar no ar.
+                    Revise texto, imagem, audio ou video antes de aprovar, rejeitar ou colocar no
+                    ar.
                   </p>
                 </div>
                 <button
@@ -1458,7 +1464,9 @@ function App() {
                     </video>
                   ) : null}
 
-                  {previewItem.content ? <p className="queue-message">{previewItem.content}</p> : null}
+                  {previewItem.content ? (
+                    <p className="queue-message">{previewItem.content}</p>
+                  ) : null}
 
                   <div className="queue-meta">
                     <span>{formatTimestamp(previewItem.receivedAt)}</span>
@@ -1469,7 +1477,8 @@ function App() {
 
                   {isPreviewBlockedFromAir ? (
                     <p className="inline-warning">
-                      Este item nao pode ir ao ar com o filtro atual porque contem: {previewBlockedMatches.join(', ')}.
+                      Este item nao pode ir ao ar com o filtro atual porque contem:{' '}
+                      {previewBlockedMatches.join(', ')}.
                     </p>
                   ) : null}
 
@@ -1500,7 +1509,9 @@ function App() {
                     </button>
                     <button
                       className="primary-button"
-                      disabled={isActing || previewItem.status === 'rejected' || isPreviewBlockedFromAir}
+                      disabled={
+                        isActing || previewItem.status === 'rejected' || isPreviewBlockedFromAir
+                      }
                       onClick={() => void handleSetLiveItem(previewItem.id)}
                       type="button"
                     >
@@ -1591,7 +1602,9 @@ function App() {
                         ) : null}
                       </div>
 
-                      {mediaTransportError ? <p className="inline-error">{mediaTransportError}</p> : null}
+                      {mediaTransportError ? (
+                        <p className="inline-error">{mediaTransportError}</p>
+                      ) : null}
 
                       <div className="transport-bar">
                         <button
@@ -1745,7 +1758,8 @@ function App() {
                           <p className="card-kicker">Operação</p>
                           <h2>Filtro de palavras</h2>
                           <p className="panel-subtitle">
-                            Itens com estas palavras continuam entrando no sistema, mas ficam impedidos de ir ao ar.
+                            Itens com estas palavras continuam entrando no sistema, mas ficam
+                            impedidos de ir ao ar.
                           </p>
                         </div>
                         <button
@@ -1769,7 +1783,8 @@ function App() {
                       </label>
 
                       <p className="operation-config-note">
-                        Separe por linha, vírgula ou ponto e vírgula. O bloqueio é salvo automaticamente neste computador.
+                        Separe por linha, vírgula ou ponto e vírgula. O bloqueio é salvo
+                        automaticamente neste computador.
                       </p>
 
                       {blockedWords.length ? (
@@ -1914,8 +1929,8 @@ function App() {
                 </label>
                 <div className="poll-options-builder field field-full">
                   <p className="poll-options-builder-note">
-                    A propria opcao ja conta como voto. Use palavras-chave extras separadas por virgula
-                    para aceitar atalhos como "s", "ss" ou variacoes parecidas.
+                    A propria opcao ja conta como voto. Use palavras-chave extras separadas por
+                    virgula para aceitar atalhos como "s", "ss" ou variacoes parecidas.
                   </p>
                   <div className="poll-options-builder-list">
                     {pollForm.options.map((option, index) => (
@@ -1924,7 +1939,9 @@ function App() {
                           <label className="field">
                             <span>Opcao {index + 1}</span>
                             <input
-                              onChange={(event) => handlePollOptionChange(index, event.target.value)}
+                              onChange={(event) =>
+                                handlePollOptionChange(index, event.target.value)
+                              }
                               placeholder={`Ex.: Opcao ${index + 1}`}
                               type="text"
                               value={option.label}
@@ -2105,7 +2122,9 @@ function App() {
                       accept="image/*"
                       className="visually-hidden-input"
                       id="canvas-background-image-upload"
-                      onChange={(event) => void handleOverlayBackgroundFileSelected('canvas', event)}
+                      onChange={(event) =>
+                        void handleOverlayBackgroundFileSelected('canvas', event)
+                      }
                       type="file"
                     />
                     <label
@@ -2234,7 +2253,8 @@ function App() {
 
                     <p className="network-access-note field-full">
                       Cada item novo no ar volta primeiro para o autoajuste do conteúdo. Os campos
-                      de largura e altura passam a valer como ajuste manual apenas para o item atual.
+                      de largura e altura passam a valer como ajuste manual apenas para o item
+                      atual.
                     </p>
 
                     <label className="field">
@@ -2336,7 +2356,9 @@ function App() {
                       accept="image/*"
                       className="visually-hidden-input"
                       id="message-background-image-upload"
-                      onChange={(event) => void handleOverlayBackgroundFileSelected('message', event)}
+                      onChange={(event) =>
+                        void handleOverlayBackgroundFileSelected('message', event)
+                      }
                       type="file"
                     />
                     <label
@@ -2473,7 +2495,11 @@ function App() {
                       <select
                         disabled={isUpdatingOverlaySettings}
                         onChange={(event) =>
-                          void handleOverlayAppearanceChange('poll', 'fontFamily', event.target.value)
+                          void handleOverlayAppearanceChange(
+                            'poll',
+                            'fontFamily',
+                            event.target.value
+                          )
                         }
                         value={getOverlayAppearanceValue('poll', 'fontFamily')}
                       >
@@ -2490,7 +2516,11 @@ function App() {
                       <input
                         disabled={isUpdatingOverlaySettings}
                         onChange={(event) =>
-                          void handleOverlayAppearanceChange('poll', 'textColor', event.target.value)
+                          void handleOverlayAppearanceChange(
+                            'poll',
+                            'textColor',
+                            event.target.value
+                          )
                         }
                         type="color"
                         value={getOverlayAppearanceValue('poll', 'textColor')}
@@ -2502,7 +2532,11 @@ function App() {
                       <input
                         disabled={isUpdatingOverlaySettings}
                         onChange={(event) =>
-                          void handleOverlayAppearanceChange('poll', 'accentColor', event.target.value)
+                          void handleOverlayAppearanceChange(
+                            'poll',
+                            'accentColor',
+                            event.target.value
+                          )
                         }
                         type="color"
                         value={getOverlayAppearanceValue('poll', 'accentColor')}
@@ -2624,7 +2658,9 @@ function App() {
             </article>
             <article className="summary-card">
               <span className="summary-label">Preview atual</span>
-              <strong className="summary-value">{previewItem ? previewItem.author : 'Nenhum item'}</strong>
+              <strong className="summary-value">
+                {previewItem ? previewItem.author : 'Nenhum item'}
+              </strong>
               <span className="summary-note">
                 {previewItem
                   ? `${getItemTypeLabel(previewItem.type)} pronto para revisão`
@@ -2633,7 +2669,9 @@ function App() {
             </article>
             <article className="summary-card">
               <span className="summary-label">No ar</span>
-              <strong className="summary-value">{liveItem ? liveItem.author : 'Nada ao vivo'}</strong>
+              <strong className="summary-value">
+                {liveItem ? liveItem.author : 'Nada ao vivo'}
+              </strong>
               <span className="summary-note">
                 {liveItem
                   ? `${getItemTypeLabel(liveItem.type)} exibido agora`
@@ -2642,7 +2680,9 @@ function App() {
             </article>
             <article className="summary-card">
               <span className="summary-label">Enquete</span>
-              <strong className="summary-value">{activePoll ? activePoll.title : 'Sem enquete'}</strong>
+              <strong className="summary-value">
+                {activePoll ? activePoll.title : 'Sem enquete'}
+              </strong>
               <span className="summary-note">
                 {activePoll
                   ? `${activePoll.totalVoters} voto(s) únicos registrados`
@@ -2809,7 +2849,7 @@ function App() {
                 <dl className="definition-list compact">
                   <div>
                     <dt>App</dt>
-                      <dd>{shellInfo?.appName || 'Carregando...'}</dd>
+                    <dd>{shellInfo?.appName || 'Carregando...'}</dd>
                   </div>
                   <div>
                     <dt>Versão</dt>
