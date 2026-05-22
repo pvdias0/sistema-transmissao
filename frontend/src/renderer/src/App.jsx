@@ -41,7 +41,7 @@ function readFileAsDataUrl(file) {
     }
 
     reader.onerror = () => {
-      reject(new Error('Nao foi possivel ler a imagem selecionada.'))
+      reject(new Error('Não foi possivel ler a imagem selecionada.'))
     }
 
     reader.readAsDataURL(file)
@@ -174,8 +174,8 @@ function getStatusLabel(status) {
 function getItemTypeLabel(type) {
   if (type === 'text') return 'Texto'
   if (type === 'image') return 'Imagem'
-  if (type === 'audio') return 'Audio'
-  if (type === 'video') return 'Video'
+  if (type === 'audio') return 'Áudio'
+  if (type === 'video') return 'Vídeo'
   return 'Item'
 }
 
@@ -194,27 +194,27 @@ function getTransportStatusLabel(status) {
   if (status === 'stopped') return 'Parado'
   if (status === 'ended') return 'Finalizado'
   if (status === 'error') return 'Erro'
-  return status || 'Indisponivel'
+  return status || 'Indisponível'
 }
 
 function getPreviewGuidance(status) {
   if (status === 'approved') {
-    return 'Este item ja foi aprovado. Se fizer sentido, coloque no ar quando quiser.'
+    return 'Este item já foi aprovado. Se fizer sentido, coloque no ar quando quiser.'
   }
 
   if (status === 'on_air') {
-    return 'Este item ja esta no ar agora.'
+    return 'Este item já esta no ar agora.'
   }
 
   if (status === 'rejected') {
-    return 'Este item foi rejeitado e nao volta para a transmissao.'
+    return 'Este item foi rejeitado e não volta para a transmissão.'
   }
 
-  return 'Revise com calma e escolha a acao logo abaixo.'
+  return 'Revise com calma e escolha a ação logo abaixo.'
 }
 
 function getWhatsAppConnectionLabel(status) {
-  if (status === 'idle') return 'Nao iniciado'
+  if (status === 'idle') return 'Não iniciado'
   if (status === 'starting') return 'Iniciando'
   if (status === 'recovering') return 'Recuperando sessao local'
   if (status === 'qr_ready') return 'Aguardando leitura do QR'
@@ -252,7 +252,7 @@ function App() {
   const [config, setConfig] = useState(null)
   const [backendHealth, setBackendHealth] = useState({
     ok: false,
-    error: 'Backend ainda nao consultado',
+    error: 'Backend ainda não consultado',
     lastCheckedAt: null
   })
   const [backendStatus, setBackendStatus] = useState(null)
@@ -467,7 +467,7 @@ function App() {
 
     if (blockedMatches.length) {
       setActionError(
-        `Este item nao pode ir ao ar porque contem termo(s) bloqueado(s): ${blockedMatches.join(', ')}.`
+        `Este item não pode ir ao ar porque contem termo(s) bloqueado(s): ${blockedMatches.join(', ')}.`
       )
       setPreviewItemId(itemId)
       return
@@ -954,7 +954,7 @@ function App() {
       }))
     } catch (error) {
       setOverlaySettingsError(
-        error instanceof Error ? error.message : 'Nao foi possivel carregar a imagem selecionada.'
+        error instanceof Error ? error.message : 'Não foi possível carregar a imagem selecionada.'
       )
     } finally {
       input.value = ''
@@ -1489,10 +1489,10 @@ function App() {
             <article className="operator-panel">
               <div className="operator-panel-header">
                 <div>
-                  <p className="card-kicker">Revisao</p>
+                  <p className="card-kicker">Revisão</p>
                   <h2>Preview</h2>
                   <p className="panel-subtitle">
-                    Revise texto, imagem, audio ou video antes de aprovar, rejeitar ou colocar no
+                    Revise texto, imagem, áudio ou vídeo antes de aprovar, rejeitar ou colocar no
                     ar.
                   </p>
                 </div>
@@ -1532,7 +1532,7 @@ function App() {
                       preload="metadata"
                       src={resolveMediaUrl(backendBaseUrl, previewItem.media.publicPath)}
                     >
-                      Seu navegador nao conseguiu carregar este audio.
+                      Seu navegador não conseguiu carregar este áudio.
                     </audio>
                   ) : null}
 
@@ -1543,7 +1543,7 @@ function App() {
                       preload="metadata"
                       src={resolveMediaUrl(backendBaseUrl, previewItem.media.publicPath)}
                     >
-                      Seu navegador nao conseguiu carregar este video.
+                      Seu navegador não conseguiu carregar este vídeo.
                     </video>
                   ) : null}
 
@@ -1560,7 +1560,7 @@ function App() {
 
                   {isPreviewBlockedFromAir ? (
                     <p className="inline-warning">
-                      Este item nao pode ir ao ar com o filtro atual porque contem:{' '}
+                      Este item não pode ir ao ar com o filtro atual porque contem:{' '}
                       {previewBlockedMatches.join(', ')}.
                     </p>
                   ) : null}
@@ -1658,7 +1658,7 @@ function App() {
                       preload="metadata"
                       src={resolveMediaUrl(backendBaseUrl, liveItem.media.publicPath)}
                     >
-                      Seu navegador nao conseguiu carregar este video.
+                      Seu navegador não conseguiu carregar este vídeo.
                     </video>
                   ) : null}
                   {liveItem.content ? <p className="queue-message">{liveItem.content}</p> : null}
@@ -1767,7 +1767,7 @@ function App() {
               title: 'Mensagens recebidas',
               kicker: 'Entrada',
               subtitle:
-                'Itens novos, pendentes ou rejeitados que ainda nao fazem parte da fila de aprovadas.',
+                'Itens novos, pendentes ou rejeitados que ainda não fazem parte da fila de aprovadas.',
               items: filteredReceivedItems,
               enableQuickModeration: true,
               showControls: receivedItems.length > 0,
@@ -1784,7 +1784,7 @@ function App() {
               title: 'Mensagens aprovadas',
               kicker: 'Prontas',
               subtitle:
-                'Itens ja liberados pelo operador e prontos para voltar ao preview ou ir ao ar.',
+                'Itens já liberados pelo operador e prontos para voltar ao preview ou ir ao ar.',
               items: filteredApprovedItems,
               enableQuickModeration: false,
               showControls: approvedItems.length > 0,
@@ -1798,7 +1798,7 @@ function App() {
             })}
           </section>
 
-          {isOperationSettingsOpen ? (
+          {false && isOperationSettingsOpen ? (
             <div
               className="operation-modal-backdrop"
               onClick={() => setIsOperationSettingsOpen(false)}
@@ -1957,7 +1957,7 @@ function App() {
             <div className="operator-panel-header">
               <div>
                 <p className="card-kicker">Enquete</p>
-                <h2>Votacao ao vivo</h2>
+                <h2>Votação ao vivo</h2>
                 <p className="panel-subtitle">
                   Crie rapidamente uma enquete e acompanhe os votos recebidos.
                 </p>
@@ -2002,7 +2002,7 @@ function App() {
             ) : (
               <form className="message-form poll-form compact-form" onSubmit={handleCreatePoll}>
                 <label className="field field-full">
-                  <span>Titulo</span>
+                  <span>Título</span>
                   <input
                     onChange={(event) => setPollForm({ ...pollForm, title: event.target.value })}
                     placeholder="Ex.: Qual abertura voce prefere?"
@@ -2012,20 +2012,20 @@ function App() {
                 </label>
                 <div className="poll-options-builder field field-full">
                   <p className="poll-options-builder-note">
-                    A propria opcao ja conta como voto. Use palavras-chave extras separadas por
-                    virgula para aceitar atalhos como "s", "ss" ou variacoes parecidas.
+                    A própria opção já conta como voto. Use palavras-chave extras separadas por
+                    vírgula para aceitar atalhos como "s", "ss" ou variações parecidas.
                   </p>
                   <div className="poll-options-builder-list">
                     {pollForm.options.map((option, index) => (
                       <div className="poll-option-editor" key={`poll-option-input-${index}`}>
                         <div className="poll-option-editor-fields">
                           <label className="field">
-                            <span>Opcao {index + 1}</span>
+                            <span>Opção {index + 1}</span>
                             <input
                               onChange={(event) =>
                                 handlePollOptionChange(index, event.target.value)
                               }
-                              placeholder={`Ex.: Opcao ${index + 1}`}
+                              placeholder={`Ex.: Opção ${index + 1}`}
                               type="text"
                               value={option.label}
                             />
@@ -2076,7 +2076,7 @@ function App() {
                       onClick={handleAddPollOption}
                       type="button"
                     >
-                      Adicionar opcao
+                      Adicionar opção
                     </button>
                   </div>
                 </div>
@@ -2097,9 +2097,9 @@ function App() {
             <div className="operator-panel-header">
               <div>
                 <p className="card-kicker">Overlay</p>
-                <h2>Personalizacao rapida</h2>
+                <h2>Personalização rápida</h2>
                 <p className="panel-subtitle">
-                  Ajuste fonte, cores e fundo das mensagens e enquetes sem editar codigo.
+                  Ajuste fonte, cores e fundo das mensagens e enquetes sem editar código.
                 </p>
               </div>
             </div>
@@ -3013,6 +3013,157 @@ function App() {
             </div>
           </article>
         </section>
+      ) : null}
+
+      {isOperationSettingsOpen ? (
+        <div
+          className="operation-modal-backdrop"
+          onClick={() => setIsOperationSettingsOpen(false)}
+          role="presentation"
+        >
+          <section
+            className="operation-modal"
+            onClick={(event) => event.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Configurações da operação"
+          >
+            <aside className="operation-modal-sidebar">
+              <p className="card-kicker">Configuração</p>
+              <button
+                className={`operation-modal-nav-button ${
+                  activeOperationSettingsSection === 'blocked_words' ? 'is-active' : ''
+                }`}
+                onClick={() => setActiveOperationSettingsSection('blocked_words')}
+                type="button"
+              >
+                Filtro de palavras
+              </button>
+              <button
+                className={`operation-modal-nav-button ${
+                  activeOperationSettingsSection === 'manual_input' ? 'is-active' : ''
+                }`}
+                onClick={() => setActiveOperationSettingsSection('manual_input')}
+                type="button"
+              >
+                Entrada manual
+              </button>
+            </aside>
+
+            <div className="operation-modal-content">
+              {activeOperationSettingsSection === 'blocked_words' ? (
+                <>
+                  <div className="operator-panel-header">
+                    <div>
+                      <p className="card-kicker">Operação</p>
+                      <h2>Filtro de palavras</h2>
+                      <p className="panel-subtitle">
+                        Itens com estas palavras continuam entrando no sistema, mas ficam impedidos
+                        de ir ao ar.
+                      </p>
+                    </div>
+                    <button
+                      className="ghost-button"
+                      onClick={() => setIsOperationSettingsOpen(false)}
+                      type="button"
+                    >
+                      Fechar
+                    </button>
+                  </div>
+
+                  <label className="field field-full">
+                    <span>Palavras ou termos bloqueados</span>
+                    <textarea
+                      className="operation-filter-textarea"
+                      onChange={(event) => setBlockedWordsText(event.target.value)}
+                      placeholder={'Ex.: palavrão\ntermo sensível\nspoiler'}
+                      rows="10"
+                      value={blockedWordsText}
+                    />
+                  </label>
+
+                  <p className="operation-config-note">
+                    Separe por linha, vírgula ou ponto e vírgula. O bloqueio é salvo
+                    automaticamente neste computador.
+                  </p>
+
+                  {blockedWords.length ? (
+                    <div className="operation-filter-chip-list">
+                      {blockedWords.map((word, index) => (
+                        <span className="mini-badge" key={`${word}-${index}`}>
+                          {word}
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="empty-state">Nenhuma palavra bloqueada configurada ainda.</p>
+                  )}
+                </>
+              ) : (
+                <>
+                  <div className="operator-panel-header">
+                    <div>
+                      <p className="card-kicker">Operação</p>
+                      <h2>Entrada manual</h2>
+                      <p className="panel-subtitle">
+                        Use este atalho apenas para validar rapidamente o fluxo local do app.
+                      </p>
+                    </div>
+                    <button
+                      className="ghost-button"
+                      onClick={() => setIsOperationSettingsOpen(false)}
+                      type="button"
+                    >
+                      Fechar
+                    </button>
+                  </div>
+
+                  <form className="message-form compact-form" onSubmit={handleSubmit}>
+                    <label className="field">
+                      <span>Autor</span>
+                      <input
+                        onChange={(event) =>
+                          setFormState({ ...formState, author: event.target.value })
+                        }
+                        placeholder="Ex.: Maria Souza"
+                        type="text"
+                        value={formState.author}
+                      />
+                    </label>
+                    <label className="field">
+                      <span>Telefone</span>
+                      <input
+                        onChange={(event) =>
+                          setFormState({ ...formState, phone: event.target.value })
+                        }
+                        placeholder="Ex.: 11999990000"
+                        type="text"
+                        value={formState.phone}
+                      />
+                    </label>
+                    <label className="field field-full">
+                      <span>Mensagem</span>
+                      <textarea
+                        onChange={(event) =>
+                          setFormState({ ...formState, content: event.target.value })
+                        }
+                        placeholder="Use esta área apenas para validar o fluxo local."
+                        rows={4}
+                        value={formState.content}
+                      />
+                    </label>
+                    {submissionError ? <p className="inline-error">{submissionError}</p> : null}
+                    <div className="form-actions">
+                      <button className="primary-button" disabled={isSubmitting} type="submit">
+                        {isSubmitting ? 'Adicionando...' : 'Adicionar à fila'}
+                      </button>
+                    </div>
+                  </form>
+                </>
+              )}
+            </div>
+          </section>
+        </div>
       ) : null}
     </main>
   )

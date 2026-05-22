@@ -475,15 +475,15 @@ export async function createApp({ startedAt }) {
       : [];
 
     if (!title) {
-      return response.status(400).json({ error: 'Titulo da enquete e obrigatorio.' });
+      return response.status(400).json({ error: 'Título da enquete e obrigatório.' });
     }
 
     if (options.length < 2) {
-      return response.status(400).json({ error: 'Informe pelo menos duas opcoes.' });
+      return response.status(400).json({ error: 'Informe pelo menos duas opções.' });
     }
 
     if (options.length > 5) {
-      return response.status(400).json({ error: 'Limite de 5 opcoes por enquete.' });
+      return response.status(400).json({ error: 'Limite de 5 opções por enquete.' });
     }
 
     const poll = store.createPoll({ title, options });

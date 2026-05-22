@@ -341,7 +341,7 @@ async function ensureBackendRunning() {
   const backendEntryPath = getBackendEntryPath()
 
   if (!existsSync(backendEntryPath)) {
-    console.warn(`Backend local nao encontrado em ${backendEntryPath}`)
+    console.warn(`Backend local não encontrado em ${backendEntryPath}`)
     return
   }
 
