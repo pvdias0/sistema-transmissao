@@ -85,15 +85,43 @@ async function parseJsonSafely(response) {
   }
 }
 
+function formatLicenseApiNetworkError(error) {
+  const baseMessage =
+    error instanceof Error && error.message ? error.message : 'Falha de comunicação com o servidor de licenças.';
+  const causeMessage =
+    error?.cause instanceof Error && error.cause.message
+      ? error.cause.message
+      : typeof error?.cause === 'string'
+        ? error.cause
+        : '';
+  const errorCode = typeof error?.cause?.code === 'string' ? error.cause.code : '';
+
+  const details = [errorCode, causeMessage].filter(Boolean).join(' - ');
+
+  if (!details) {
+    return baseMessage;
+  }
+
+  return `${baseMessage} (${details})`;
+}
+
 async function requestLicenseApi(pathname, payload) {
-  const response = await fetch(new URL(pathname, `${licenseConfig.apiBaseUrl}/`), {
-    method: 'POST',
-    headers: {
-      accept: 'application/json',
-      'content-type': 'application/json'
-    },
-    body: JSON.stringify(payload)
-  });
+  let response;
+
+  try {
+    response = await fetch(new URL(pathname, `${licenseConfig.apiBaseUrl}/`), {
+      method: 'POST',
+      headers: {
+        accept: 'application/json',
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify(payload)
+    });
+  } catch (error) {
+    const wrappedError = new Error(formatLicenseApiNetworkError(error));
+    wrappedError.cause = error;
+    throw wrappedError;
+  }
 
   const data = await parseJsonSafely(response);
 

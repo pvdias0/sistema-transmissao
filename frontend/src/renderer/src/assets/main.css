@@ -1392,6 +1392,46 @@ html[data-theme='light'] {
   margin-top: 4px;
 }
 
+.update-progress-block {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.update-progress-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: rgba(239, 245, 245, 0.88);
+  font-size: 14px;
+}
+
+.update-progress-bar {
+  overflow: hidden;
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.update-progress-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, rgba(135, 232, 191, 0.85), rgba(255, 202, 128, 0.85));
+  transition: width 180ms ease;
+}
+
+.update-progress-note {
+  margin: 0;
+  color: rgba(239, 245, 245, 0.72);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .status-block-stack {
   display: grid;
   gap: 16px;
@@ -1901,6 +1941,23 @@ body::-webkit-scrollbar-thumb:hover,
 
 .app-shell[data-theme='light'] .inline-error {
   color: #b13d3d;
+}
+
+.app-shell[data-theme='light'] .update-progress-block {
+  background: rgba(23, 42, 40, 0.05);
+  border-color: rgba(23, 42, 40, 0.12);
+}
+
+.app-shell[data-theme='light'] .update-progress-header {
+  color: rgba(20, 31, 31, 0.84);
+}
+
+.app-shell[data-theme='light'] .update-progress-bar {
+  background: rgba(23, 42, 40, 0.1);
+}
+
+.app-shell[data-theme='light'] .update-progress-note {
+  color: rgba(36, 54, 54, 0.72);
 }
 
 .app-shell[data-theme='light'] .vote-match,

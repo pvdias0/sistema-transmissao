@@ -234,6 +234,13 @@ async function downloadAppUpdate() {
   }
 
   try {
+    setAppUpdateState({
+      status: 'downloading',
+      error: null,
+      progressPercent: appUpdateState.progressPercent || 0,
+      transferredBytes: appUpdateState.transferredBytes || 0,
+      totalBytes: appUpdateState.totalBytes || 0
+    })
     await autoUpdater.downloadUpdate()
     return {
       ok: true,

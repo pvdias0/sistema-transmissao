@@ -839,6 +839,15 @@ function App() {
 
   async function handleDownloadUpdate() {
     setAppUpdateError('')
+    setAppUpdateState((currentState) =>
+      currentState
+        ? {
+            ...currentState,
+            status: 'downloading',
+            error: null
+          }
+        : currentState
+    )
     const result = await window.api.appUpdate.download()
 
     if (!result.ok) {
@@ -1250,6 +1259,10 @@ function App() {
   const isUpdateReadyToInstall = appUpdateState?.status === 'downloaded'
   const isUpdateAvailable = appUpdateState?.status === 'available'
   const isUpdateUnavailable = appUpdateState?.supported === false
+  const updateProgressPercent = Math.max(
+    0,
+    Math.min(100, Math.round(appUpdateState?.progressPercent || 0))
+  )
   const hasControllableMedia =
     Boolean(liveItem) &&
     (liveItem?.type === 'audio' || liveItem?.type === 'video') &&
@@ -3317,6 +3330,35 @@ function App() {
                 </dl>
                 {appUpdateState?.error ? (
                   <p className="inline-error">{appUpdateState.error}</p>
+                ) : null}
+                {isDownloadingUpdate ? (
+                  <div className="update-progress-block" aria-live="polite">
+                    <div className="update-progress-header">
+                      <strong>Download em andamento</strong>
+                      <span>{updateProgressPercent}%</span>
+                    </div>
+                    <div
+                      aria-valuemax="100"
+                      aria-valuemin="0"
+                      aria-valuenow={updateProgressPercent}
+                      className="update-progress-bar"
+                      role="progressbar"
+                    >
+                      <span
+                        className="update-progress-bar-fill"
+                        style={{ width: `${updateProgressPercent}%` }}
+                      />
+                    </div>
+                    <p className="update-progress-note">
+                      {formatByteSize(appUpdateState?.transferredBytes || 0)} de{' '}
+                      {formatByteSize(appUpdateState?.totalBytes || 0)} baixados.
+                    </p>
+                  </div>
+                ) : null}
+                {isUpdateReadyToInstall ? (
+                  <p className="update-progress-note">
+                    A atualização foi baixada. Reinicie o app para concluir a instalação.
+                  </p>
                 ) : null}
                 {isUpdateUnavailable ? (
                   <p className="network-access-note">
