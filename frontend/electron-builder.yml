@@ -18,7 +18,7 @@ nsis:
   artifactName: ${productName}-${version}-setup.${ext}
   shortcutName: ${productName}
   uninstallDisplayName: ${productName}
-  createDesktopShortcut: ask
+  createDesktopShortcut: true
 mac:
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
