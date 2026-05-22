@@ -4,10 +4,13 @@ import { promisify } from 'node:util'
 import { existsSync, mkdirSync } from 'node:fs'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
+import electronUpdater from 'electron-updater'
 import icon from '../../resources/logo-pulso-260.png?asset'
 
+const { autoUpdater } = electronUpdater
 const backendBaseUrl = process.env.BACKEND_BASE_URL || 'http://127.0.0.1:47831'
 const workspaceRoot = join(__dirname, '../../..')
+let mainWindowRef = null
 
 function getBackendSourceRoot() {
   return app.isPackaged ? join(process.resourcesPath, 'backend') : join(workspaceRoot, 'backend')
@@ -32,6 +35,239 @@ const BACKEND_STARTUP_TIMEOUT_MS = 8000
 const BACKEND_STARTUP_POLL_MS = 350
 const execFileAsync = promisify(execFile)
 let backendHostOverride = null
+let isAutoUpdaterConfigured = false
+let appUpdateState = {
+  supported: false,
+  status: 'unavailable',
+  currentVersion: app.getVersion(),
+  availableVersion: null,
+  lastCheckedAt: null,
+  downloadedAt: null,
+  progressPercent: 0,
+  transferredBytes: 0,
+  totalBytes: 0,
+  error: null
+}
+
+function emitAppUpdateState() {
+  for (const window of BrowserWindow.getAllWindows()) {
+    window.webContents.send('app-update:state-changed', appUpdateState)
+  }
+}
+
+function setAppUpdateState(partialState) {
+  appUpdateState = {
+    ...appUpdateState,
+    ...partialState,
+    currentVersion: app.getVersion()
+  }
+
+  emitAppUpdateState()
+}
+
+function getAppUpdateSnapshot() {
+  return {
+    ...appUpdateState,
+    currentVersion: app.getVersion()
+  }
+}
+
+function configureAutoUpdater() {
+  if (isAutoUpdaterConfigured) {
+    return
+  }
+
+  isAutoUpdaterConfigured = true
+
+  if (!app.isPackaged) {
+    setAppUpdateState({
+      supported: false,
+      status: 'unavailable',
+      error: 'Atualizacao automatica disponivel apenas no app instalado.'
+    })
+    return
+  }
+
+  setAppUpdateState({
+    supported: true,
+    status: 'idle',
+    error: null
+  })
+
+  autoUpdater.autoDownload = false
+  autoUpdater.autoInstallOnAppQuit = false
+
+  autoUpdater.on('checking-for-update', () => {
+    setAppUpdateState({
+      status: 'checking',
+      error: null,
+      lastCheckedAt: new Date().toISOString(),
+      progressPercent: 0,
+      transferredBytes: 0,
+      totalBytes: 0
+    })
+  })
+
+  autoUpdater.on('update-available', (info) => {
+    setAppUpdateState({
+      status: 'available',
+      availableVersion: info?.version || null,
+      error: null,
+      lastCheckedAt: new Date().toISOString(),
+      downloadedAt: null,
+      progressPercent: 0,
+      transferredBytes: 0,
+      totalBytes: 0
+    })
+  })
+
+  autoUpdater.on('update-not-available', () => {
+    setAppUpdateState({
+      status: 'up_to_date',
+      availableVersion: null,
+      error: null,
+      lastCheckedAt: new Date().toISOString(),
+      downloadedAt: null,
+      progressPercent: 0,
+      transferredBytes: 0,
+      totalBytes: 0
+    })
+  })
+
+  autoUpdater.on('download-progress', (progress) => {
+    setAppUpdateState({
+      status: 'downloading',
+      error: null,
+      progressPercent: Number.isFinite(progress?.percent) ? progress.percent : 0,
+      transferredBytes: Number.isFinite(progress?.transferred) ? progress.transferred : 0,
+      totalBytes: Number.isFinite(progress?.total) ? progress.total : 0
+    })
+  })
+
+  autoUpdater.on('update-downloaded', (info) => {
+    setAppUpdateState({
+      status: 'downloaded',
+      availableVersion: info?.version || appUpdateState.availableVersion,
+      error: null,
+      downloadedAt: new Date().toISOString(),
+      progressPercent: 100
+    })
+  })
+
+  autoUpdater.on('error', (error) => {
+    setAppUpdateState({
+      status: 'error',
+      error: error instanceof Error ? error.message : 'Falha ao verificar atualizacoes.'
+    })
+  })
+}
+
+async function checkForAppUpdates() {
+  if (!app.isPackaged) {
+    return {
+      ok: false,
+      error: 'Atualizacao automatica disponivel apenas no app instalado.',
+      data: getAppUpdateSnapshot()
+    }
+  }
+
+  if (appUpdateState.status === 'checking' || appUpdateState.status === 'downloading') {
+    return {
+      ok: true,
+      data: getAppUpdateSnapshot()
+    }
+  }
+
+  try {
+    await autoUpdater.checkForUpdates()
+    return {
+      ok: true,
+      data: getAppUpdateSnapshot()
+    }
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : 'Falha ao verificar atualizacoes disponiveis.'
+    setAppUpdateState({
+      status: 'error',
+      error: message
+    })
+    return {
+      ok: false,
+      error: message,
+      data: getAppUpdateSnapshot()
+    }
+  }
+}
+
+async function downloadAppUpdate() {
+  if (!app.isPackaged) {
+    return {
+      ok: false,
+      error: 'Atualizacao automatica disponivel apenas no app instalado.',
+      data: getAppUpdateSnapshot()
+    }
+  }
+
+  if (appUpdateState.status !== 'available' && appUpdateState.status !== 'downloading') {
+    return {
+      ok: false,
+      error: 'Nenhuma atualizacao pronta para download no momento.',
+      data: getAppUpdateSnapshot()
+    }
+  }
+
+  try {
+    await autoUpdater.downloadUpdate()
+    return {
+      ok: true,
+      data: getAppUpdateSnapshot()
+    }
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : 'Falha ao baixar atualizacao disponivel.'
+    setAppUpdateState({
+      status: 'error',
+      error: message
+    })
+    return {
+      ok: false,
+      error: message,
+      data: getAppUpdateSnapshot()
+    }
+  }
+}
+
+function installDownloadedUpdate() {
+  if (!app.isPackaged) {
+    return {
+      ok: false,
+      error: 'Atualizacao automatica disponivel apenas no app instalado.',
+      data: getAppUpdateSnapshot()
+    }
+  }
+
+  if (appUpdateState.status !== 'downloaded') {
+    return {
+      ok: false,
+      error: 'Nenhuma atualizacao baixada pronta para instalar.',
+      data: getAppUpdateSnapshot()
+    }
+  }
+
+  setAppUpdateState({
+    status: 'installing',
+    error: null
+  })
+
+  setImmediate(() => {
+    autoUpdater.quitAndInstall()
+  })
+
+  return {
+    ok: true,
+    data: getAppUpdateSnapshot()
+  }
+}
 
 async function isBackendReachable() {
   try {
@@ -341,9 +577,21 @@ function createWindow() {
   } else {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
+
+  mainWindowRef = mainWindow
+
+  mainWindow.on('closed', () => {
+    if (mainWindowRef === mainWindow) {
+      mainWindowRef = null
+    }
+  })
 }
 
 function registerIpcHandlers() {
+  ipcMain.removeHandler('app-update:get-state')
+  ipcMain.removeHandler('app-update:check')
+  ipcMain.removeHandler('app-update:download')
+  ipcMain.removeHandler('app-update:install')
   ipcMain.removeHandler('system:get-config')
   ipcMain.removeHandler('system:get-shell-info')
   ipcMain.removeHandler('backend:get-health')
@@ -377,6 +625,23 @@ function registerIpcHandlers() {
     platform: process.platform,
     isDev: is.dev
   }))
+
+  ipcMain.handle('app-update:get-state', () => ({
+    ok: true,
+    data: getAppUpdateSnapshot()
+  }))
+
+  ipcMain.handle('app-update:check', async () => {
+    return checkForAppUpdates()
+  })
+
+  ipcMain.handle('app-update:download', async () => {
+    return downloadAppUpdate()
+  })
+
+  ipcMain.handle('app-update:install', () => {
+    return installDownloadedUpdate()
+  })
 
   ipcMain.handle('system:enable-network-access', async (_event, payload) => {
     return enableNetworkAccessRule(Number(payload?.port))
@@ -678,6 +943,7 @@ app.whenReady().then(async () => {
   })
 
   await ensureBackendRunning()
+  configureAutoUpdater()
   registerIpcHandlers()
   createWindow()
 

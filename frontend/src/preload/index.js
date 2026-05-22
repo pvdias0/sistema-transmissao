@@ -2,6 +2,20 @@ import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 
 const api = {
+  appUpdate: {
+    getState: () => ipcRenderer.invoke('app-update:get-state'),
+    check: () => ipcRenderer.invoke('app-update:check'),
+    download: () => ipcRenderer.invoke('app-update:download'),
+    install: () => ipcRenderer.invoke('app-update:install'),
+    onStateChange: (callback) => {
+      const listener = (_event, payload) => callback(payload)
+      ipcRenderer.on('app-update:state-changed', listener)
+
+      return () => {
+        ipcRenderer.removeListener('app-update:state-changed', listener)
+      }
+    }
+  },
   system: {
     getConfig: () => ipcRenderer.invoke('system:get-config'),
     getShellInfo: () => ipcRenderer.invoke('system:get-shell-info'),

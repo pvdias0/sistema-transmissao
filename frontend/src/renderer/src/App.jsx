@@ -76,6 +76,22 @@ function formatDurationLabel(valueInSeconds) {
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
 }
 
+function formatByteSize(value) {
+  if (!Number.isFinite(value) || value <= 0) {
+    return '0 B'
+  }
+
+  if (value >= 1024 * 1024) {
+    return `${(value / (1024 * 1024)).toFixed(1)} MB`
+  }
+
+  if (value >= 1024) {
+    return `${(value / 1024).toFixed(1)} KB`
+  }
+
+  return `${Math.round(value)} B`
+}
+
 function resolveMediaUrl(baseUrl, publicPath) {
   if (!baseUrl || !publicPath) {
     return ''
@@ -217,8 +233,22 @@ function getWhatsAppStatusClass(status) {
   return 'neutral'
 }
 
+function getAppUpdateStatusLabel(status) {
+  if (status === 'idle') return 'Pronto para verificar'
+  if (status === 'checking') return 'Verificando atualizações'
+  if (status === 'available') return 'Atualização disponível'
+  if (status === 'up_to_date') return 'Você já está na versão mais recente'
+  if (status === 'downloading') return 'Baixando atualização'
+  if (status === 'downloaded') return 'Atualização pronta para instalar'
+  if (status === 'installing') return 'Instalando atualização'
+  if (status === 'error') return 'Falha na atualização'
+  if (status === 'unavailable') return 'Indisponível neste ambiente'
+  return 'Indisponível'
+}
+
 function App() {
   const [shellInfo, setShellInfo] = useState(null)
+  const [appUpdateState, setAppUpdateState] = useState(null)
   const [config, setConfig] = useState(null)
   const [backendHealth, setBackendHealth] = useState({
     ok: false,
@@ -238,6 +268,7 @@ function App() {
   const [pollError, setPollError] = useState('')
   const [networkAccessError, setNetworkAccessError] = useState('')
   const [networkAccessSuccess, setNetworkAccessSuccess] = useState('')
+  const [appUpdateError, setAppUpdateError] = useState('')
   const [formState, setFormState] = useState(INITIAL_FORM)
   const [pollForm, setPollForm] = useState(INITIAL_POLL_FORM)
   const [receivedSearch, setReceivedSearch] = useState('')
@@ -293,14 +324,6 @@ function App() {
       setBackendStatus(statusResult.ok ? statusResult.data : null)
       setModerationState(moderationResult.ok ? moderationResult.data : null)
       setWhatsAppStatus(whatsappResult.ok ? whatsappResult.data : null)
-
-      if (!moderationResult.ok && !actionError) {
-        setActionError(moderationResult.error)
-      }
-
-      if (!whatsappResult.ok && !whatsAppError) {
-        setWhatsAppError(whatsappResult.error)
-      }
     }
 
     async function bootstrap() {
@@ -308,6 +331,7 @@ function App() {
         window.api.system.getShellInfo(),
         window.api.system.getConfig()
       ])
+      const nextAppUpdateState = await window.api.appUpdate.getState()
 
       if (!active) {
         return
@@ -315,21 +339,35 @@ function App() {
 
       setShellInfo(nextShellInfo)
       setConfig(nextConfig)
+      setAppUpdateState(nextAppUpdateState.ok ? nextAppUpdateState.data : null)
 
       await refreshAll()
       intervalId = window.setInterval(refreshAll, REFRESH_INTERVAL_MS)
     }
 
+    const unsubscribeAppUpdate = window.api.appUpdate.onStateChange((nextState) => {
+      if (!active) {
+        return
+      }
+
+      setAppUpdateState(nextState)
+
+      if (nextState?.status !== 'error') {
+        setAppUpdateError('')
+      }
+    })
+
     bootstrap()
 
     return () => {
       active = false
+      unsubscribeAppUpdate()
 
       if (intervalId) {
         window.clearInterval(intervalId)
       }
     }
-  }, [actionError, whatsAppError])
+  }, [])
 
   useEffect(() => {
     const liveTransport = moderationState?.mediaTransport
@@ -625,6 +663,45 @@ function App() {
         : 'Acesso da rede removido.'
     )
     await refreshOperationalState()
+  }
+
+  async function handleCheckForUpdates() {
+    setAppUpdateError('')
+    const result = await window.api.appUpdate.check()
+
+    if (!result.ok) {
+      setAppUpdateError(result.error)
+    }
+
+    if (result.data) {
+      setAppUpdateState(result.data)
+    }
+  }
+
+  async function handleDownloadUpdate() {
+    setAppUpdateError('')
+    const result = await window.api.appUpdate.download()
+
+    if (!result.ok) {
+      setAppUpdateError(result.error)
+    }
+
+    if (result.data) {
+      setAppUpdateState(result.data)
+    }
+  }
+
+  async function handleInstallUpdate() {
+    setAppUpdateError('')
+    const result = await window.api.appUpdate.install()
+
+    if (!result.ok) {
+      setAppUpdateError(result.error)
+    }
+
+    if (result.data) {
+      setAppUpdateState(result.data)
+    }
   }
 
   async function handleOverlayFontSizeChange(target, delta) {
@@ -1008,6 +1085,12 @@ function App() {
     whatsAppStatus?.connection === 'ready' ||
     whatsAppStatus?.connection === 'authenticated' ||
     whatsAppStatus?.connection === 'qr_ready'
+  const appUpdateStatusLabel = getAppUpdateStatusLabel(appUpdateState?.status)
+  const isCheckingForUpdates = appUpdateState?.status === 'checking'
+  const isDownloadingUpdate = appUpdateState?.status === 'downloading'
+  const isUpdateReadyToInstall = appUpdateState?.status === 'downloaded'
+  const isUpdateAvailable = appUpdateState?.status === 'available'
+  const isUpdateUnavailable = appUpdateState?.supported === false
   const hasControllableMedia =
     Boolean(liveItem) &&
     (liveItem?.type === 'audio' || liveItem?.type === 'video') &&
@@ -2846,6 +2929,7 @@ function App() {
                 <div className="status-block-header">
                   <h3>Aplicativo</h3>
                 </div>
+                {appUpdateError ? <p className="inline-error">{appUpdateError}</p> : null}
                 <dl className="definition-list compact">
                   <div>
                     <dt>App</dt>
@@ -2863,7 +2947,70 @@ function App() {
                     <dt>Modo dev</dt>
                     <dd>{formatBooleanLabel(Boolean(shellInfo?.isDev))}</dd>
                   </div>
+                  <div>
+                    <dt>Atualização</dt>
+                    <dd>{appUpdateStatusLabel}</dd>
+                  </div>
+                  <div>
+                    <dt>Versão disponível</dt>
+                    <dd>{appUpdateState?.availableVersion || 'Nenhuma pendente'}</dd>
+                  </div>
+                  <div>
+                    <dt>Última checagem</dt>
+                    <dd>
+                      {appUpdateState?.lastCheckedAt
+                        ? formatTimestamp(appUpdateState.lastCheckedAt)
+                        : 'Ainda não verificada'}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Download</dt>
+                    <dd>
+                      {isDownloadingUpdate
+                        ? `${Math.round(appUpdateState?.progressPercent || 0)}% (${formatByteSize(
+                            appUpdateState?.transferredBytes || 0
+                          )} / ${formatByteSize(appUpdateState?.totalBytes || 0)})`
+                        : isUpdateReadyToInstall
+                          ? 'Concluído'
+                          : 'Aguardando'}
+                    </dd>
+                  </div>
                 </dl>
+                {appUpdateState?.error ? <p className="inline-error">{appUpdateState.error}</p> : null}
+                {isUpdateUnavailable ? (
+                  <p className="network-access-note">
+                    A atualização automática funciona apenas no aplicativo instalado.
+                  </p>
+                ) : null}
+                <div className="status-block-actions">
+                  <button
+                    className="ghost-button"
+                    disabled={isCheckingForUpdates || isDownloadingUpdate || isUpdateReadyToInstall}
+                    onClick={handleCheckForUpdates}
+                    type="button"
+                  >
+                    {isCheckingForUpdates ? 'Verificando...' : 'Verificar atualização'}
+                  </button>
+                  {isUpdateAvailable ? (
+                    <button
+                      className="primary-button"
+                      disabled={isDownloadingUpdate}
+                      onClick={handleDownloadUpdate}
+                      type="button"
+                    >
+                      {isDownloadingUpdate ? 'Baixando...' : 'Baixar atualização'}
+                    </button>
+                  ) : null}
+                  {isUpdateReadyToInstall ? (
+                    <button
+                      className="primary-button"
+                      onClick={handleInstallUpdate}
+                      type="button"
+                    >
+                      Reiniciar e atualizar
+                    </button>
+                  ) : null}
+                </div>
               </section>
             </div>
           </article>
