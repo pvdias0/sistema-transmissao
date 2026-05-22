@@ -1,6 +1,6 @@
 {
   "name": "pulso",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Mensagens e enquetes no ar para transmissões ao vivo",
   "main": "./out/main/index.js",
   "author": "Pedro Vitor Dias",
