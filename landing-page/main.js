@@ -1,3 +1,6 @@
+const RELEASE_BASE_URL = 'https://updates.pvapps.com.br'
+const RELEASE_LATEST_URL = `${RELEASE_BASE_URL}/latest.yml`
+
 const downloadLink = document.getElementById('download-link')
 const downloadVersion = document.getElementById('download-version')
 const downloadNote = document.getElementById('download-note')
@@ -19,7 +22,7 @@ function parseLatestReleaseYml(rawText) {
 
 async function hydrateReleaseLink() {
   try {
-    const response = await fetch('./latest.yml', {
+    const response = await fetch(RELEASE_LATEST_URL, {
       cache: 'no-store'
     })
 
@@ -32,19 +35,21 @@ async function hydrateReleaseLink() {
     const release = parseLatestReleaseYml(rawText)
 
     if (release.path) {
-      downloadLink.href = `./${release.path}`
+      downloadLink.href = `${RELEASE_BASE_URL}/${release.path}`
     }
 
     if (release.version) {
       downloadVersion.textContent = `v${release.version}`
       downloadNote.textContent =
-        'O botão de download está lendo automaticamente a release publicada nesta pasta.'
+        'O botão de download está lendo automaticamente a release publicada no servidor de updates.'
       return
     }
 
     setReleaseFallback('Release detectada, mas sem versão legível no arquivo latest.yml.')
   } catch {
-    setReleaseFallback('Não foi possível ler latest.yml. Verifique se ele foi publicado junto do instalador.')
+    setReleaseFallback(
+      'Não foi possível ler latest.yml do servidor de updates. Verifique se a release foi publicada.'
+    )
   }
 }
 
