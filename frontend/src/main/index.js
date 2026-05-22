@@ -4,7 +4,7 @@ import { promisify } from 'node:util'
 import { existsSync } from 'node:fs'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
-import icon from '../../resources/logo-pulso-icon.png?asset'
+import icon from '../../resources/logo-pulso-260.png?asset'
 
 const backendBaseUrl = process.env.BACKEND_BASE_URL || 'http://127.0.0.1:47831'
 const workspaceRoot = join(__dirname, '../../..')

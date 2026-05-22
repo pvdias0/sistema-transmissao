@@ -3,7 +3,7 @@ import './assets/main.css'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App'
-import pulsoLogo from '../../../resources/logo-pulso-icon.png'
+import pulsoLogo from '../../../resources/logo-pulso-260.png'
 
 const existingFavicon = document.querySelector("link[rel='icon']")
 

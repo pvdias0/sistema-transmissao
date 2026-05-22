@@ -11,7 +11,7 @@ files:
 asarUnpack:
   - resources/**
 win:
-  icon: resources/logo-pulso-icon.png
+  icon: resources/logo-pulso-260.png
   executableName: Pulso
 nsis:
   oneClick: false
