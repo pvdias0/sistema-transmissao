@@ -478,7 +478,7 @@ export function createRuntimeStore({ initialState = null, onChange = null } = {}
         const item = createTextItem({
           id: nextId(),
           author: author?.trim() || 'Anonimo',
-          phone: phone?.trim() || 'Nao informado',
+          phone: phone?.trim() || 'Não informado',
           content: content?.trim() || '',
           authorAvatarUrl: authorAvatarUrl?.trim() || null,
           receivedAt: new Date().toISOString(),
@@ -499,7 +499,7 @@ export function createRuntimeStore({ initialState = null, onChange = null } = {}
         createImageItem({
           id: nextId(),
           author: author?.trim() || 'Anonimo',
-          phone: phone?.trim() || 'Nao informado',
+          phone: phone?.trim() || 'Não informado',
           content: content?.trim() || '',
           authorAvatarUrl: authorAvatarUrl?.trim() || null,
           receivedAt: new Date().toISOString(),
@@ -514,7 +514,7 @@ export function createRuntimeStore({ initialState = null, onChange = null } = {}
         createAudioItem({
           id: nextId(),
           author: author?.trim() || 'Anonimo',
-          phone: phone?.trim() || 'Nao informado',
+          phone: phone?.trim() || 'Não informado',
           content: content?.trim() || '',
           authorAvatarUrl: authorAvatarUrl?.trim() || null,
           receivedAt: new Date().toISOString(),
@@ -529,7 +529,7 @@ export function createRuntimeStore({ initialState = null, onChange = null } = {}
         createVideoItem({
           id: nextId(),
           author: author?.trim() || 'Anonimo',
-          phone: phone?.trim() || 'Nao informado',
+          phone: phone?.trim() || 'Não informado',
           content: content?.trim() || '',
           authorAvatarUrl: authorAvatarUrl?.trim() || null,
           receivedAt: new Date().toISOString(),

@@ -73,7 +73,7 @@ function formatDisplayIdentity(value) {
   const normalizedValue = normalizeWhatsAppId(value);
 
   if (!normalizedValue) {
-    return 'Nao informado';
+    return 'Não informado';
   }
 
   return normalizedValue;

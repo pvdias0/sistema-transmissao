@@ -552,7 +552,7 @@ async function postTransportTelemetry(payload, options = {}) {
       })
     });
   } catch (_error) {
-    // Telemetria falha silenciosamente para nao quebrar o overlay.
+    // Telemetria falha silenciosamente para não quebrar o overlay.
   }
 }
 
@@ -615,7 +615,7 @@ function attachMediaTelemetryListeners(mediaElement) {
         status: 'error',
         currentTime: mediaElement.currentTime,
         duration: mediaElement.duration,
-        error: mediaElement.error?.message || 'Falha na reproducao da midia.'
+        error: mediaElement.error?.message || 'Falha na reprodução da mídia.'
       },
       { force: true }
     );
@@ -852,7 +852,7 @@ async function applyMediaTransportCommand(mediaTransport) {
           status: 'error',
           currentTime: mediaElement.currentTime,
           duration: mediaElement.duration,
-          error: 'O navegador bloqueou a reproducao automatica da midia.'
+          error: 'O navegador bloqueou a reprodução automática da mídia.'
         },
         { force: true }
       );
@@ -880,7 +880,7 @@ async function applyMediaTransportCommand(mediaTransport) {
           status: 'error',
           currentTime: mediaElement.currentTime,
           duration: mediaElement.duration,
-          error: 'O navegador bloqueou a reproducao automatica da midia.'
+          error: 'O navegador bloqueou a reprodução automática da mídia.'
         },
         { force: true }
       );

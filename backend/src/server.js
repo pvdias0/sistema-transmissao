@@ -9,7 +9,7 @@ const server = createServer(app);
 server.on('error', (error) => {
   if (error.code === 'EADDRINUSE') {
     console.error(
-      `Porta ${backendConfig.port} ja esta em uso em ${backendConfig.host}. Verifique se o backend ja esta em execucao.`
+      `Porta ${backendConfig.port} já esta em uso em ${backendConfig.host}. Verifique se o backend já esta em execucao.`
     );
     process.exit(1);
   }

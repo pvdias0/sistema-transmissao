@@ -341,7 +341,7 @@ export async function createApp({ startedAt }) {
     const item = store.approveItem(request.params.id);
 
     if (!item) {
-      return response.status(404).json({ error: 'Item nao encontrado.' });
+      return response.status(404).json({ error: 'Item não encontrado.' });
     }
 
     return response.json(item);
@@ -351,7 +351,7 @@ export async function createApp({ startedAt }) {
     const item = store.rejectItem(request.params.id);
 
     if (!item) {
-      return response.status(404).json({ error: 'Item nao encontrado.' });
+      return response.status(404).json({ error: 'Item não encontrado.' });
     }
 
     return response.json(item);
@@ -361,7 +361,7 @@ export async function createApp({ startedAt }) {
     const item = store.setLiveItem(request.params.id);
 
     if (!item) {
-      return response.status(404).json({ error: 'Item nao encontrado.' });
+      return response.status(404).json({ error: 'Item não encontrado.' });
     }
 
     return response.json(item);
@@ -399,7 +399,7 @@ export async function createApp({ startedAt }) {
 
     if (!mediaTransport) {
       return response.status(409).json({
-        error: 'Nao existe audio ou video no ar para controlar.'
+        error: 'Não existe audio ou video no ar para controlar.'
       });
     }
 

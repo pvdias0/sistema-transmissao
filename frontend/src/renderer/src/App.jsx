@@ -3,6 +3,7 @@
 const REFRESH_INTERVAL_MS = 4000
 const MEDIA_TRANSPORT_REFRESH_INTERVAL_MS = 250
 const BLOCKED_WORDS_STORAGE_KEY = 'sistema-transmissao.blocked-words.v1'
+const THEME_STORAGE_KEY = 'sistema-transmissao.theme.v1'
 
 const INITIAL_FORM = {
   author: '',
@@ -252,7 +253,12 @@ function App() {
   const [fontOverrideForm, setFontOverrideForm] = useState({})
   const [overlayAppearanceDrafts, setOverlayAppearanceDrafts] = useState({})
   const [activeTab, setActiveTab] = useState('operation')
+  const [theme, setTheme] = useState('dark')
+  const [activeOverlaySection, setActiveOverlaySection] = useState('canvas')
+  const [activeVmixUrlTab, setActiveVmixUrlTab] = useState('local')
+  const [activeSystemTransmissionTab, setActiveSystemTransmissionTab] = useState('local')
   const [previewItemId, setPreviewItemId] = useState(null)
+  const [copiedUrlValue, setCopiedUrlValue] = useState('')
   const [isOperationSettingsOpen, setIsOperationSettingsOpen] = useState(false)
   const [activeOperationSettingsSection, setActiveOperationSettingsSection] =
     useState('blocked_words')
@@ -385,6 +391,32 @@ function App() {
       // Ignora falhas de persistencia local no renderer.
     }
   }, [blockedWordsText])
+
+  useEffect(() => {
+    try {
+      const savedTheme = window.localStorage.getItem(THEME_STORAGE_KEY)
+
+      if (savedTheme === 'light' || savedTheme === 'dark') {
+        setTheme(savedTheme)
+      }
+    } catch (_error) {
+      // Ignora falhas de persistencia local no renderer.
+    }
+  }, [])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(THEME_STORAGE_KEY, theme)
+    } catch (_error) {
+      // Ignora falhas de persistencia local no renderer.
+    }
+
+    document.body.dataset.theme = theme
+
+    return () => {
+      delete document.body.dataset.theme
+    }
+  }, [theme])
 
   async function refreshOperationalState() {
     const [statusResult, moderationResult, whatsappResult] = await Promise.all([
@@ -857,7 +889,7 @@ function App() {
     }
   }
 
-  async function copyToClipboard(value) {
+  async function copyToClipboard(value, feedbackKey = value) {
     if (!value) {
       return
     }
@@ -865,6 +897,10 @@ function App() {
     if (navigator?.clipboard?.writeText) {
       try {
         await navigator.clipboard.writeText(value)
+        setCopiedUrlValue(feedbackKey)
+        window.setTimeout(() => {
+          setCopiedUrlValue((current) => (current === feedbackKey ? '' : current))
+        }, 1400)
         return
       } catch {
         // fallback below
@@ -881,6 +917,10 @@ function App() {
 
     try {
       document.execCommand('copy')
+      setCopiedUrlValue(feedbackKey)
+      window.setTimeout(() => {
+        setCopiedUrlValue((current) => (current === feedbackKey ? '' : current))
+      }, 1400)
     } finally {
       document.body.removeChild(textarea)
     }
@@ -1008,6 +1048,7 @@ function App() {
     kicker,
     subtitle,
     items,
+    enableQuickModeration,
     showControls,
     searchValue,
     onSearchChange,
@@ -1086,7 +1127,6 @@ function App() {
                             {getStatusLabel(item.status)}
                           </span>
                         </div>
-                        <p className="operator-queue-phone">{item.phone}</p>
                         <p className="operator-queue-snippet">
                           {item.content?.trim()
                             ? item.content
@@ -1094,8 +1134,6 @@ function App() {
                         </p>
                         <div className="queue-meta">
                           <span>{formatTimestamp(item.receivedAt)}</span>
-                          <span>{getItemTypeLabel(item.type)}</span>
-                          <span>{item.source}</span>
                         </div>
                         {item.pollVote ? (
                           <p className="vote-match">
@@ -1108,19 +1146,39 @@ function App() {
                             Filtro de palavras: {blockedMatches.join(', ')}
                           </p>
                         ) : null}
-                      </div>
-                      <div className="operator-queue-actions">
-                        <button
-                          className={isSelected ? 'primary-button' : 'ghost-button'}
-                          disabled={isSelected}
-                          onClick={(event) => {
-                            event.stopPropagation()
-                            setPreviewItemId(item.id)
-                          }}
-                          type="button"
-                        >
-                          {isSelected ? 'Selecionado' : 'Abrir preview'}
-                        </button>
+                        <div className="operator-queue-footer">
+                          <span className="message-type-badge">{getItemTypeLabel(item.type)}</span>
+                          {enableQuickModeration ? (
+                            <div className="operator-queue-actions">
+                              <div className="queue-quick-actions">
+                                <button
+                                  className="ghost-button ghost-button-compact queue-quick-action queue-quick-action-approve"
+                                  disabled={isActing || item.status === 'approved' || item.status === 'on_air'}
+                                  onClick={(event) => {
+                                    event.stopPropagation()
+                                    void runItemAction(() => window.api.backend.approveItem(item.id))
+                                  }}
+                                  type="button"
+                                >
+                                  Aprovar
+                                </button>
+                                <button
+                                  className="ghost-button ghost-button-compact queue-quick-action queue-quick-action-reject"
+                                  disabled={isActing || item.status === 'rejected'}
+                                  onClick={(event) => {
+                                    event.stopPropagation()
+                                    void runItemAction(() => window.api.backend.rejectItem(item.id))
+                                  }}
+                                  type="button"
+                                >
+                                  Rejeitar
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <span />
+                          )}
+                        </div>
                       </div>
                     </div>
                   </article>
@@ -1161,37 +1219,171 @@ function App() {
     return backendStatus?.overlaySettings?.[target]?.[key] ?? ''
   }
 
+  function renderCopyableUrl(value, feedbackKey) {
+    const isCopied = copiedUrlValue === feedbackKey
+
+    return (
+      <div className="copy-inline-row">
+        <span className="copy-inline-value">{value || 'Indisponível'}</span>
+        <div className="copy-inline-actions">
+          <button
+            aria-label="Copiar URL"
+            className={`copy-inline-button ${isCopied ? 'is-copied' : ''}`}
+            disabled={!value}
+            onClick={() => void copyToClipboard(value, feedbackKey)}
+            title={isCopied ? 'Copiado' : 'Copiar URL'}
+            type="button"
+          >
+            <span aria-hidden="true" className="copy-inline-icon" />
+          </button>
+          {isCopied ? <span className="copy-inline-feedback">Copiado</span> : null}
+        </div>
+      </div>
+    )
+  }
+
+  function renderTransmissionUrlBlock(mode) {
+    const isLocal = mode === 'local'
+    const messageUrl = isLocal ? localOverlayMessageUrl : networkOverlayMessageUrl
+    const pollUrl = isLocal ? localOverlayPollUrl : networkOverlayPollUrl
+    const statusLabel = messageUrl || pollUrl ? 'Disponível' : 'Indisponível'
+
+    return (
+      <div className="status-block-stack">
+        <dl className="definition-list compact">
+          <div>
+            <dt>Status da URL</dt>
+            <dd>{statusLabel}</dd>
+          </div>
+          <div>
+            <dt>Overlay de mensagens</dt>
+            <dd>{renderCopyableUrl(messageUrl, `${mode}-message`)}</dd>
+          </div>
+          <div>
+            <dt>Overlay de enquete</dt>
+            <dd>{renderCopyableUrl(pollUrl, `${mode}-poll`)}</dd>
+          </div>
+          {isLocal ? (
+            <div>
+              <dt>Última checagem</dt>
+              <dd>{formatLastCheck(backendHealth.lastCheckedAt)}</dd>
+            </div>
+          ) : null}
+          {isLocal ? (
+            <div>
+              <dt>Sistema</dt>
+              <dd>{backendHealth.ok ? 'Online' : backendHealth.error}</dd>
+            </div>
+          ) : null}
+        </dl>
+
+        {!isLocal ? (
+          <div className="network-access-panel">
+            <p className="network-access-note">
+              {isNetworkAccessEnabled
+                ? 'O acesso pela rede local está liberado. Se não quiser mais expor o overlay para outros dispositivos, retire o acesso.'
+                : 'Para compartilhar o overlay na rede local, permita a conexão no firewall do Windows.'}
+            </p>
+            {recommendedNetworkAddress ? (
+              <p className="network-access-note">
+                IP recomendado para outros dispositivos: <strong>{recommendedNetworkAddress}</strong>
+              </p>
+            ) : null}
+            <div className="network-access-actions">
+              <button
+                className="ghost-button"
+                disabled={isEnablingNetworkAccess || !backendStatus?.transport?.port}
+                onClick={() =>
+                  void (isNetworkAccessEnabled
+                    ? handleDisableNetworkAccess()
+                    : handleEnableNetworkAccess())
+                }
+                type="button"
+              >
+                {isEnablingNetworkAccess
+                  ? 'Atualizando acesso...'
+                  : isNetworkAccessEnabled
+                    ? 'Retirar acesso da rede'
+                    : 'Permitir acesso na rede'}
+              </button>
+              {networkAccessSuccess ? <p className="vote-match">{networkAccessSuccess}</p> : null}
+              {networkAccessError ? <p className="inline-error">{networkAccessError}</p> : null}
+            </div>
+            {otherNetworkCandidates.length ? (
+              <details className="network-candidates-panel">
+                <summary>Detalhes técnicos de rede</summary>
+                <p className="network-access-note">
+                  Outros IPs detectados nesta máquina:{' '}
+                  {otherNetworkCandidates.map((candidate) => candidate.address).join(', ')}
+                </p>
+              </details>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    )
+  }
+
+  function handleToggleTheme() {
+    setTheme((current) => (current === 'dark' ? 'light' : 'dark'))
+  }
+
   return (
-    <main className="app-shell operator-shell">
-      <section className="operator-tabs operator-tabs-top">
-        <button
-          className={`operator-tab-button ${activeTab === 'operation' ? 'is-active' : ''}`}
-          onClick={() => setActiveTab('operation')}
-          type="button"
-        >
-          Operacao
-        </button>
-        <button
-          className={`operator-tab-button ${activeTab === 'polls' ? 'is-active' : ''}`}
-          onClick={() => setActiveTab('polls')}
-          type="button"
-        >
-          Enquete
-        </button>
-        <button
-          className={`operator-tab-button ${activeTab === 'overlay' ? 'is-active' : ''}`}
-          onClick={() => setActiveTab('overlay')}
-          type="button"
-        >
-          Overlay
-        </button>
-        <button
-          className={`operator-tab-button ${activeTab === 'system' ? 'is-active' : ''}`}
-          onClick={() => setActiveTab('system')}
-          type="button"
-        >
-          Sistema
-        </button>
+    <main className="app-shell operator-shell" data-theme={theme}>
+      <section className="operator-tabs-top">
+        <div className="operator-tabs">
+          <button
+            className={`operator-tab-button ${activeTab === 'operation' ? 'is-active' : ''}`}
+            onClick={() => setActiveTab('operation')}
+            type="button"
+          >
+            Operação
+          </button>
+          <button
+            className={`operator-tab-button ${activeTab === 'polls' ? 'is-active' : ''}`}
+            onClick={() => setActiveTab('polls')}
+            type="button"
+          >
+            Enquete
+          </button>
+          <button
+            className={`operator-tab-button ${activeTab === 'overlay' ? 'is-active' : ''}`}
+            onClick={() => setActiveTab('overlay')}
+            type="button"
+          >
+            Overlay
+          </button>
+          <button
+            className={`operator-tab-button ${activeTab === 'system' ? 'is-active' : ''}`}
+            onClick={() => setActiveTab('system')}
+            type="button"
+          >
+            Sistema
+          </button>
+        </div>
+
+        <div className="operator-tabs-meta">
+          <button
+            aria-label={theme === 'dark' ? 'Ativar tema claro' : 'Ativar tema escuro'}
+            className="ghost-button icon-button operator-theme-trigger"
+            onClick={handleToggleTheme}
+            title={theme === 'dark' ? 'Ativar tema claro' : 'Ativar tema escuro'}
+            type="button"
+          >
+            {theme === 'dark' ? '☀' : '☾'}
+          </button>
+          {activeTab === 'operation' ? (
+            <button
+              aria-label="Abrir configurações da operação"
+              className="ghost-button icon-button operator-settings-trigger"
+              onClick={() => setIsOperationSettingsOpen(true)}
+              title="Configurações da operação"
+              type="button"
+            >
+              {String.fromCharCode(9881)}
+            </button>
+          ) : null}
+        </div>
       </section>
 
       {(whatsAppError || actionError || overlaySettingsError || pollError) ? (
@@ -1230,7 +1422,6 @@ function App() {
                   <div className="live-item-header">
                     <div>
                       <h3>{previewItem.author}</h3>
-                      <p>{previewItem.phone}</p>
                     </div>
                     <span className={`mini-status mini-status-${previewItem.status}`}>
                       {getStatusLabel(previewItem.status)}
@@ -1318,8 +1509,9 @@ function App() {
                   </div>
                 </article>
               ) : (
-                <p className="empty-state">
-                  Escolha um item em <code>Mensagens recebidas</code> ou <code>Mensagens aprovadas</code> para abrir o preview.
+                <p className="empty-state empty-state-top">
+                  Escolha um item em <code>Mensagens recebidas</code> ou{' '}
+                  <code>Mensagens aprovadas</code> para abrir o preview.
                 </p>
               )}
             </article>
@@ -1327,22 +1519,13 @@ function App() {
             <article className="operator-panel">
               <div className="operator-panel-header">
                 <div>
-                  <p className="card-kicker">Transmissao</p>
+                  <p className="card-kicker">Transmissão</p>
                   <h2>No ar</h2>
                   <p className="panel-subtitle">
-                    O que esta sendo exibido agora no overlay usado pelo vMix.
+                    O que está sendo exibido agora no overlay usado pelo vMix.
                   </p>
                 </div>
                 <div className="operator-panel-actions">
-                  <button
-                    aria-label="Abrir configuracoes da operacao"
-                    className="ghost-button icon-button"
-                    onClick={() => setIsOperationSettingsOpen(true)}
-                    title="Configuracoes da operacao"
-                    type="button"
-                  >
-                    {String.fromCharCode(9881)}
-                  </button>
                   <button
                     className="ghost-button"
                     disabled={isActing || !liveItem}
@@ -1476,8 +1659,8 @@ function App() {
                   ) : null}
                 </article>
               ) : (
-                <p className="empty-state">
-                  Nenhum item foi enviado para a transmissao ainda.
+                <p className="empty-state empty-state-top">
+                  Nenhum item foi enviado para a transmissão ainda.
                 </p>
               )}
             </article>
@@ -1490,6 +1673,7 @@ function App() {
               subtitle:
                 'Itens novos, pendentes ou rejeitados que ainda nao fazem parte da fila de aprovadas.',
               items: filteredReceivedItems,
+              enableQuickModeration: true,
               showControls: receivedItems.length > 0,
               searchValue: receivedSearch,
               onSearchChange: setReceivedSearch,
@@ -1506,6 +1690,7 @@ function App() {
               subtitle:
                 'Itens ja liberados pelo operador e prontos para voltar ao preview ou ir ao ar.',
               items: filteredApprovedItems,
+              enableQuickModeration: false,
               showControls: approvedItems.length > 0,
               searchValue: approvedSearch,
               onSearchChange: setApprovedSearch,
@@ -1528,10 +1713,10 @@ function App() {
                 onClick={(event) => event.stopPropagation()}
                 role="dialog"
                 aria-modal="true"
-                aria-label="Configuracoes da operacao"
+                aria-label="Configurações da operação"
               >
                 <aside className="operation-modal-sidebar">
-                  <p className="card-kicker">Configuracao</p>
+                  <p className="card-kicker">Configuração</p>
                   <button
                     className={`operation-modal-nav-button ${
                       activeOperationSettingsSection === 'blocked_words' ? 'is-active' : ''
@@ -1541,53 +1726,125 @@ function App() {
                   >
                     Filtro de palavras
                   </button>
+                  <button
+                    className={`operation-modal-nav-button ${
+                      activeOperationSettingsSection === 'manual_input' ? 'is-active' : ''
+                    }`}
+                    onClick={() => setActiveOperationSettingsSection('manual_input')}
+                    type="button"
+                  >
+                    Entrada manual
+                  </button>
                 </aside>
 
                 <div className="operation-modal-content">
-                  <div className="operator-panel-header">
-                    <div>
-                      <p className="card-kicker">Operacao</p>
-                      <h2>Filtro de palavras</h2>
-                      <p className="panel-subtitle">
-                        Itens com estas palavras continuam entrando no sistema, mas ficam impedidos de ir ao ar.
+                  {activeOperationSettingsSection === 'blocked_words' ? (
+                    <>
+                      <div className="operator-panel-header">
+                        <div>
+                          <p className="card-kicker">Operação</p>
+                          <h2>Filtro de palavras</h2>
+                          <p className="panel-subtitle">
+                            Itens com estas palavras continuam entrando no sistema, mas ficam impedidos de ir ao ar.
+                          </p>
+                        </div>
+                        <button
+                          className="ghost-button"
+                          onClick={() => setIsOperationSettingsOpen(false)}
+                          type="button"
+                        >
+                          Fechar
+                        </button>
+                      </div>
+
+                      <label className="field field-full">
+                        <span>Palavras ou termos bloqueados</span>
+                        <textarea
+                          className="operation-filter-textarea"
+                          onChange={(event) => setBlockedWordsText(event.target.value)}
+                          placeholder={'Ex.: palavrão\ntermo sensível\nspoiler'}
+                          rows="10"
+                          value={blockedWordsText}
+                        />
+                      </label>
+
+                      <p className="operation-config-note">
+                        Separe por linha, vírgula ou ponto e vírgula. O bloqueio é salvo automaticamente neste computador.
                       </p>
-                    </div>
-                    <button
-                      className="ghost-button"
-                      onClick={() => setIsOperationSettingsOpen(false)}
-                      type="button"
-                    >
-                      Fechar
-                    </button>
-                  </div>
 
-                  <label className="field field-full">
-                    <span>Palavras ou termos bloqueados</span>
-                    <textarea
-                      className="operation-filter-textarea"
-                      onChange={(event) => setBlockedWordsText(event.target.value)}
-                      placeholder={'Ex.: palavrao\ntermo sensivel\nspoiler'}
-                      rows="10"
-                      value={blockedWordsText}
-                    />
-                  </label>
-
-                  <p className="operation-config-note">
-                    Separe por linha, virgula ou ponto e virgula. O bloqueio e salvo automaticamente neste computador.
-                  </p>
-
-                  {blockedWords.length ? (
-                    <div className="operation-filter-chip-list">
-                      {blockedWords.map((word, index) => (
-                        <span className="mini-badge" key={`${word}-${index}`}>
-                          {word}
-                        </span>
-                      ))}
-                    </div>
+                      {blockedWords.length ? (
+                        <div className="operation-filter-chip-list">
+                          {blockedWords.map((word, index) => (
+                            <span className="mini-badge" key={`${word}-${index}`}>
+                              {word}
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="empty-state">Nenhuma palavra bloqueada configurada ainda.</p>
+                      )}
+                    </>
                   ) : (
-                    <p className="empty-state">
-                      Nenhuma palavra bloqueada configurada ainda.
-                    </p>
+                    <>
+                      <div className="operator-panel-header">
+                        <div>
+                          <p className="card-kicker">Operação</p>
+                          <h2>Entrada manual</h2>
+                          <p className="panel-subtitle">
+                            Use este atalho apenas para validar rapidamente o fluxo local do app.
+                          </p>
+                        </div>
+                        <button
+                          className="ghost-button"
+                          onClick={() => setIsOperationSettingsOpen(false)}
+                          type="button"
+                        >
+                          Fechar
+                        </button>
+                      </div>
+
+                      <form className="message-form compact-form" onSubmit={handleSubmit}>
+                        <label className="field">
+                          <span>Autor</span>
+                          <input
+                            onChange={(event) =>
+                              setFormState({ ...formState, author: event.target.value })
+                            }
+                            placeholder="Ex.: Maria Souza"
+                            type="text"
+                            value={formState.author}
+                          />
+                        </label>
+                        <label className="field">
+                          <span>Telefone</span>
+                          <input
+                            onChange={(event) =>
+                              setFormState({ ...formState, phone: event.target.value })
+                            }
+                            placeholder="Ex.: 11999990000"
+                            type="text"
+                            value={formState.phone}
+                          />
+                        </label>
+                        <label className="field field-full">
+                          <span>Mensagem</span>
+                          <textarea
+                            onChange={(event) =>
+                              setFormState({ ...formState, content: event.target.value })
+                            }
+                            placeholder="Use esta área apenas para validar o fluxo local."
+                            rows={4}
+                            value={formState.content}
+                          />
+                        </label>
+                        {submissionError ? <p className="inline-error">{submissionError}</p> : null}
+                        <div className="form-actions">
+                          <button className="primary-button" disabled={isSubmitting} type="submit">
+                            {isSubmitting ? 'Adicionando...' : 'Adicionar à fila'}
+                          </button>
+                        </div>
+                      </form>
+                    </>
                   )}
                 </div>
               </section>
@@ -1747,738 +2004,631 @@ function App() {
               </div>
             </div>
 
+            <div className="overlay-style-tabs">
+              <button
+                className={`operator-tab-button ${activeOverlaySection === 'canvas' ? 'is-active' : ''}`}
+                onClick={() => setActiveOverlaySection('canvas')}
+                type="button"
+              >
+                Fundo geral
+              </button>
+              <button
+                className={`operator-tab-button ${activeOverlaySection === 'message' ? 'is-active' : ''}`}
+                onClick={() => setActiveOverlaySection('message')}
+                type="button"
+              >
+                Card da mensagem
+              </button>
+              <button
+                className={`operator-tab-button ${activeOverlaySection === 'poll' ? 'is-active' : ''}`}
+                onClick={() => setActiveOverlaySection('poll')}
+                type="button"
+              >
+                Card da enquete
+              </button>
+            </div>
+
             <div className="overlay-style-grid">
-              <section className="overlay-style-card overlay-style-card-wide">
-                <div className="overlay-style-header">
-                  <div>
-                    <p className="card-kicker">Transmissao</p>
-                    <h3>Fundo geral</h3>
-                  </div>
-                </div>
-
-                <div className="overlay-style-fields">
-                  <label className="field field-full">
-                    <span>Fundo da transmissao</span>
-                    <select
-                      disabled={isUpdatingOverlaySettings}
-                      onChange={(event) =>
-                        void handleOverlayAppearanceChange(
-                          'canvas',
-                          'enabled',
-                          event.target.value === 'enabled'
-                        )
-                      }
-                      value={getOverlayAppearanceValue('canvas', 'enabled') ? 'enabled' : 'transparent'}
-                    >
-                      <option value="transparent">Transparente (padrao)</option>
-                      <option value="enabled">Aplicar fundo customizado</option>
-                    </select>
-                  </label>
-
-                  <label className="field">
-                    <span>Cor de fundo</span>
-                    <input
-                      disabled={isUpdatingOverlaySettings}
-                      onChange={(event) =>
-                        void handleOverlayAppearanceChange(
-                          'canvas',
-                          'backgroundColor',
-                          event.target.value
-                        )
-                      }
-                      type="color"
-                      value={getOverlayAppearanceValue('canvas', 'backgroundColor')}
-                    />
-                  </label>
-
-                  <label className="field field-full">
-                    <span>Imagem de fundo opcional</span>
-                    <input
-                      disabled={isUpdatingOverlaySettings}
-                      onBlur={() => void commitOverlayBackgroundImage('canvas')}
-                      onChange={(event) =>
-                        handleOverlayAppearanceDraftChange(
-                          'canvas',
-                          'backgroundImageUrl',
-                          event.target.value
-                        )
-                      }
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter') {
-                          event.preventDefault()
-                          void commitOverlayBackgroundImage('canvas')
-                        }
-                      }}
-                      placeholder="Cole uma URL de imagem. Deixe vazio para usar so a cor."
-                      type="text"
-                      value={getOverlayAppearanceValue('canvas', 'backgroundImageUrl')}
-                    />
-                  </label>
-                </div>
-
-                <div className="overlay-style-actions">
-                  <input
-                    accept="image/*"
-                    className="visually-hidden-input"
-                    id="canvas-background-image-upload"
-                    onChange={(event) => void handleOverlayBackgroundFileSelected('canvas', event)}
-                    type="file"
-                  />
-                  <label className="ghost-button file-upload-button" htmlFor="canvas-background-image-upload">
-                    Enviar imagem do fundo
-                  </label>
-                  <button
-                    className="ghost-button"
-                    disabled={isUpdatingOverlaySettings}
-                    onClick={() => void clearOverlayBackgroundImage('canvas')}
-                    type="button"
-                  >
-                    Remover imagem do fundo
-                  </button>
-                </div>
-              </section>
-
-              <section className="overlay-style-card">
-                <div className="overlay-style-header">
-                  <div>
-                    <p className="card-kicker">Mensagem</p>
-                    <h3>Card da mensagem</h3>
-                  </div>
-                </div>
-
-                <div className="font-control-group">
-                  <div className="font-control-row">
-                    <span className="font-control-label">Tamanho</span>
-                    <div className="font-control-actions">
-                      <button
-                        className="ghost-button"
-                        disabled={isUpdatingOverlaySettings}
-                        onClick={() => handleOverlayFontSizeChange('message', -2)}
-                        type="button"
-                      >
-                        A-
-                      </button>
-                      <label className="font-control-input-shell">
-                        <input
-                          className="font-control-input"
-                          disabled={isUpdatingOverlaySettings}
-                          inputMode="numeric"
-                          onBlur={() => void commitOverlayFontSize('message')}
-                          onChange={(event) =>
-                            handleFontOverrideInputChange('message', event.target.value)
-                          }
-                          onKeyDown={(event) => {
-                            if (event.key === 'Enter') {
-                              event.preventDefault()
-                              void commitOverlayFontSize('message')
-                            }
-                          }}
-                          type="text"
-                          value={getOverlayFontInputValue('message')}
-                        />
-                        <span className="font-control-unit">px</span>
-                      </label>
-                      <button
-                        className="ghost-button"
-                        disabled={isUpdatingOverlaySettings}
-                        onClick={() => handleOverlayFontSizeChange('message', 2)}
-                        type="button"
-                      >
-                        A+
-                      </button>
+              {activeOverlaySection === 'canvas' ? (
+                <section className="overlay-style-card overlay-style-card-wide">
+                  <div className="overlay-style-header">
+                    <div>
+                      <p className="card-kicker">Transmissão</p>
+                      <h3>Fundo geral</h3>
                     </div>
                   </div>
-                </div>
 
-                <div className="overlay-style-fields">
-                  <label className="field">
-                    <span>Largura da caixa</span>
-                    <input
-                      disabled={isUpdatingOverlaySettings}
-                      onBlur={() => void commitOverlayBoxDimension('message', 'boxWidth')}
-                      onChange={(event) =>
-                        void handleOverlayBoxDimensionInputChange(
-                          'message',
-                          'boxWidth',
-                          event.target.value
-                        )
-                      }
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter') {
-                          event.preventDefault()
-                          void commitOverlayBoxDimension('message', 'boxWidth')
-                        }
-                      }}
-                      max="1800"
-                      min="180"
-                      step="10"
-                      type="number"
-                      value={getOverlayAppearanceValue('message', 'boxWidth')}
-                    />
-                  </label>
-
-                  <label className="field">
-                    <span>Altura da caixa</span>
-                    <input
-                      disabled={isUpdatingOverlaySettings}
-                      onBlur={() => void commitOverlayBoxDimension('message', 'boxHeight')}
-                      onChange={(event) =>
-                        void handleOverlayBoxDimensionInputChange(
-                          'message',
-                          'boxHeight',
-                          event.target.value
-                        )
-                      }
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter') {
-                          event.preventDefault()
-                          void commitOverlayBoxDimension('message', 'boxHeight')
-                        }
-                      }}
-                      max="1800"
-                      min="180"
-                      step="10"
-                      type="number"
-                      value={getOverlayAppearanceValue('message', 'boxHeight')}
-                    />
-                  </label>
-
-                  <p className="network-access-note field-full">
-                    Cada item novo no ar volta primeiro para o autoajuste do conteudo. Os campos
-                    de largura e altura passam a valer como ajuste manual somente para o item atual.
-                  </p>
-
-                  <label className="field">
-                    <span>Fonte</span>
-                    <select
-                      disabled={isUpdatingOverlaySettings}
-                      onChange={(event) =>
-                        void handleOverlayAppearanceChange(
-                          'message',
-                          'fontFamily',
-                          event.target.value
-                        )
-                      }
-                      value={getOverlayAppearanceValue('message', 'fontFamily')}
-                    >
-                      {OVERLAY_FONT_OPTIONS.map((fontOption) => (
-                        <option key={fontOption} value={fontOption}>
-                          {fontOption}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <label className="field">
-                    <span>Cor do texto</span>
-                    <input
-                      disabled={isUpdatingOverlaySettings}
-                      onChange={(event) =>
-                        void handleOverlayAppearanceChange(
-                          'message',
-                          'textColor',
-                          event.target.value
-                        )
-                      }
-                      type="color"
-                      value={getOverlayAppearanceValue('message', 'textColor')}
-                    />
-                  </label>
-
-                  <label className="field">
-                    <span>Cor de destaque</span>
-                    <input
-                      disabled={isUpdatingOverlaySettings}
-                      onChange={(event) =>
-                        void handleOverlayAppearanceChange(
-                          'message',
-                          'accentColor',
-                          event.target.value
-                        )
-                      }
-                      type="color"
-                      value={getOverlayAppearanceValue('message', 'accentColor')}
-                    />
-                  </label>
-
-                  <label className="field">
-                    <span>Cor de fundo</span>
-                    <input
-                      disabled={isUpdatingOverlaySettings}
-                      onChange={(event) =>
-                        void handleOverlayAppearanceChange(
-                          'message',
-                          'backgroundColor',
-                          event.target.value
-                        )
-                      }
-                      type="color"
-                      value={getOverlayAppearanceValue('message', 'backgroundColor')}
-                    />
-                  </label>
-
-                  <label className="field field-full">
-                    <span>Imagem de fundo opcional</span>
-                    <input
-                      disabled={isUpdatingOverlaySettings}
-                      onBlur={() => void commitOverlayBackgroundImage('message')}
-                      onChange={(event) =>
-                        handleOverlayAppearanceDraftChange(
-                          'message',
-                          'backgroundImageUrl',
-                          event.target.value
-                        )
-                      }
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter') {
-                          event.preventDefault()
-                          void commitOverlayBackgroundImage('message')
-                        }
-                      }}
-                      placeholder="Cole uma URL de imagem. Deixe vazio para usar so a cor."
-                      type="text"
-                      value={getOverlayAppearanceValue('message', 'backgroundImageUrl')}
-                    />
-                  </label>
-                </div>
-
-                <div className="overlay-style-actions">
-                  <input
-                    accept="image/*"
-                    className="visually-hidden-input"
-                    id="message-background-image-upload"
-                    onChange={(event) => void handleOverlayBackgroundFileSelected('message', event)}
-                    type="file"
-                  />
-                  <label
-                    className="ghost-button file-upload-button"
-                    htmlFor="message-background-image-upload"
-                  >
-                    Enviar imagem da mensagem
-                  </label>
-                  <button
-                    className="ghost-button"
-                    disabled={isUpdatingOverlaySettings}
-                    onClick={() => void clearOverlayBackgroundImage('message')}
-                    type="button"
-                  >
-                    Remover imagem da mensagem
-                  </button>
-                </div>
-              </section>
-
-              <section className="overlay-style-card">
-                <div className="overlay-style-header">
-                  <div>
-                    <p className="card-kicker">Enquete</p>
-                    <h3>Card da enquete</h3>
-                  </div>
-                </div>
-
-                <div className="font-control-group">
-                  <div className="font-control-row">
-                    <span className="font-control-label">Tamanho</span>
-                    <div className="font-control-actions">
-                      <button
-                        className="ghost-button"
+                  <div className="overlay-style-fields">
+                    <label className="field field-full">
+                      <span>Fundo da transmissão</span>
+                      <select
                         disabled={isUpdatingOverlaySettings}
-                        onClick={() => handleOverlayFontSizeChange('poll', -2)}
-                        type="button"
+                        onChange={(event) =>
+                          void handleOverlayAppearanceChange(
+                            'canvas',
+                            'enabled',
+                            event.target.value === 'enabled'
+                          )
+                        }
+                        value={
+                          getOverlayAppearanceValue('canvas', 'enabled') ? 'enabled' : 'transparent'
+                        }
                       >
-                        A-
-                      </button>
-                      <label className="font-control-input-shell">
-                        <input
-                          className="font-control-input"
-                          disabled={isUpdatingOverlaySettings}
-                          inputMode="numeric"
-                          onBlur={() => void commitOverlayFontSize('poll')}
-                          onChange={(event) =>
-                            handleFontOverrideInputChange('poll', event.target.value)
+                        <option value="transparent">Transparente (padrão)</option>
+                        <option value="enabled">Aplicar fundo customizado</option>
+                      </select>
+                    </label>
+
+                    <label className="field">
+                      <span>Cor de fundo</span>
+                      <input
+                        disabled={isUpdatingOverlaySettings}
+                        onChange={(event) =>
+                          void handleOverlayAppearanceChange(
+                            'canvas',
+                            'backgroundColor',
+                            event.target.value
+                          )
+                        }
+                        type="color"
+                        value={getOverlayAppearanceValue('canvas', 'backgroundColor')}
+                      />
+                    </label>
+
+                    <label className="field field-full">
+                      <span>Imagem de fundo opcional</span>
+                      <input
+                        disabled={isUpdatingOverlaySettings}
+                        onBlur={() => void commitOverlayBackgroundImage('canvas')}
+                        onChange={(event) =>
+                          handleOverlayAppearanceDraftChange(
+                            'canvas',
+                            'backgroundImageUrl',
+                            event.target.value
+                          )
+                        }
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') {
+                            event.preventDefault()
+                            void commitOverlayBackgroundImage('canvas')
                           }
-                          onKeyDown={(event) => {
-                            if (event.key === 'Enter') {
-                              event.preventDefault()
-                              void commitOverlayFontSize('poll')
-                            }
-                          }}
-                          type="text"
-                          value={getOverlayFontInputValue('poll')}
-                        />
-                        <span className="font-control-unit">px</span>
-                      </label>
-                      <button
-                        className="ghost-button"
-                        disabled={isUpdatingOverlaySettings}
-                        onClick={() => handleOverlayFontSizeChange('poll', 2)}
-                        type="button"
-                      >
-                        A+
-                      </button>
+                        }}
+                        placeholder="Cole uma URL de imagem. Deixe vazio para usar só a cor."
+                        type="text"
+                        value={getOverlayAppearanceValue('canvas', 'backgroundImageUrl')}
+                      />
+                    </label>
+                  </div>
+
+                  <div className="overlay-style-actions">
+                    <input
+                      accept="image/*"
+                      className="visually-hidden-input"
+                      id="canvas-background-image-upload"
+                      onChange={(event) => void handleOverlayBackgroundFileSelected('canvas', event)}
+                      type="file"
+                    />
+                    <label
+                      className="ghost-button file-upload-button"
+                      htmlFor="canvas-background-image-upload"
+                    >
+                      Enviar imagem do fundo
+                    </label>
+                    <button
+                      className="ghost-button"
+                      disabled={isUpdatingOverlaySettings}
+                      onClick={() => void clearOverlayBackgroundImage('canvas')}
+                      type="button"
+                    >
+                      Remover imagem do fundo
+                    </button>
+                  </div>
+                </section>
+              ) : null}
+
+              {activeOverlaySection === 'message' ? (
+                <section className="overlay-style-card overlay-style-card-wide">
+                  <div className="overlay-style-header">
+                    <div>
+                      <p className="card-kicker">Mensagem</p>
+                      <h3>Card da mensagem</h3>
                     </div>
                   </div>
-                </div>
 
-                <div className="overlay-style-fields">
-                  <label className="field">
-                    <span>Largura da caixa</span>
-                    <input
-                      disabled={isUpdatingOverlaySettings}
-                      onBlur={() => void commitOverlayBoxDimension('poll', 'boxWidth')}
-                      onChange={(event) =>
-                        void handleOverlayBoxDimensionInputChange(
-                          'poll',
-                          'boxWidth',
-                          event.target.value
-                        )
-                      }
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter') {
-                          event.preventDefault()
-                          void commitOverlayBoxDimension('poll', 'boxWidth')
+                  <div className="font-control-group">
+                    <div className="font-control-row">
+                      <span className="font-control-label">Fonte da mensagem</span>
+                      <div className="font-control-actions">
+                        <button
+                          className="ghost-button"
+                          disabled={isUpdatingOverlaySettings}
+                          onClick={() => handleOverlayFontSizeChange('message', -2)}
+                          type="button"
+                        >
+                          A-
+                        </button>
+                        <label className="font-control-input-shell">
+                          <input
+                            className="font-control-input"
+                            disabled={isUpdatingOverlaySettings}
+                            inputMode="numeric"
+                            onBlur={() => void commitOverlayFontSize('message')}
+                            onChange={(event) =>
+                              handleFontOverrideInputChange('message', event.target.value)
+                            }
+                            onKeyDown={(event) => {
+                              if (event.key === 'Enter') {
+                                event.preventDefault()
+                                void commitOverlayFontSize('message')
+                              }
+                            }}
+                            type="text"
+                            value={getOverlayFontInputValue('message')}
+                          />
+                          <span className="font-control-unit">px</span>
+                        </label>
+                        <button
+                          className="ghost-button"
+                          disabled={isUpdatingOverlaySettings}
+                          onClick={() => handleOverlayFontSizeChange('message', 2)}
+                          type="button"
+                        >
+                          A+
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="overlay-style-fields">
+                    <label className="field">
+                      <span>Largura da caixa</span>
+                      <input
+                        disabled={isUpdatingOverlaySettings}
+                        onBlur={() => void commitOverlayBoxDimension('message', 'boxWidth')}
+                        onChange={(event) =>
+                          void handleOverlayBoxDimensionInputChange(
+                            'message',
+                            'boxWidth',
+                            event.target.value
+                          )
                         }
-                      }}
-                      max="1800"
-                      min="180"
-                      step="10"
-                      type="number"
-                      value={getOverlayAppearanceValue('poll', 'boxWidth')}
-                    />
-                  </label>
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') {
+                            event.preventDefault()
+                            void commitOverlayBoxDimension('message', 'boxWidth')
+                          }
+                        }}
+                        max="1800"
+                        min="180"
+                        step="10"
+                        type="number"
+                        value={getOverlayAppearanceValue('message', 'boxWidth')}
+                      />
+                    </label>
 
-                  <label className="field">
-                    <span>Altura da caixa</span>
-                    <input
-                      disabled={isUpdatingOverlaySettings}
-                      onBlur={() => void commitOverlayBoxDimension('poll', 'boxHeight')}
-                      onChange={(event) =>
-                        void handleOverlayBoxDimensionInputChange(
-                          'poll',
-                          'boxHeight',
-                          event.target.value
-                        )
-                      }
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter') {
-                          event.preventDefault()
-                          void commitOverlayBoxDimension('poll', 'boxHeight')
+                    <label className="field">
+                      <span>Altura da caixa</span>
+                      <input
+                        disabled={isUpdatingOverlaySettings}
+                        onBlur={() => void commitOverlayBoxDimension('message', 'boxHeight')}
+                        onChange={(event) =>
+                          void handleOverlayBoxDimensionInputChange(
+                            'message',
+                            'boxHeight',
+                            event.target.value
+                          )
                         }
-                      }}
-                      max="1800"
-                      min="180"
-                      step="10"
-                      type="number"
-                      value={getOverlayAppearanceValue('poll', 'boxHeight')}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') {
+                            event.preventDefault()
+                            void commitOverlayBoxDimension('message', 'boxHeight')
+                          }
+                        }}
+                        max="1800"
+                        min="180"
+                        step="10"
+                        type="number"
+                        value={getOverlayAppearanceValue('message', 'boxHeight')}
+                      />
+                    </label>
+
+                    <p className="network-access-note field-full">
+                      Cada item novo no ar volta primeiro para o autoajuste do conteúdo. Os campos
+                      de largura e altura passam a valer como ajuste manual apenas para o item atual.
+                    </p>
+
+                    <label className="field">
+                      <span>Fonte</span>
+                      <select
+                        disabled={isUpdatingOverlaySettings}
+                        onChange={(event) =>
+                          void handleOverlayAppearanceChange(
+                            'message',
+                            'fontFamily',
+                            event.target.value
+                          )
+                        }
+                        value={getOverlayAppearanceValue('message', 'fontFamily')}
+                      >
+                        {OVERLAY_FONT_OPTIONS.map((fontOption) => (
+                          <option key={fontOption} value={fontOption}>
+                            {fontOption}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="field">
+                      <span>Cor do texto</span>
+                      <input
+                        disabled={isUpdatingOverlaySettings}
+                        onChange={(event) =>
+                          void handleOverlayAppearanceChange(
+                            'message',
+                            'textColor',
+                            event.target.value
+                          )
+                        }
+                        type="color"
+                        value={getOverlayAppearanceValue('message', 'textColor')}
+                      />
+                    </label>
+
+                    <label className="field">
+                      <span>Cor de destaque</span>
+                      <input
+                        disabled={isUpdatingOverlaySettings}
+                        onChange={(event) =>
+                          void handleOverlayAppearanceChange(
+                            'message',
+                            'accentColor',
+                            event.target.value
+                          )
+                        }
+                        type="color"
+                        value={getOverlayAppearanceValue('message', 'accentColor')}
+                      />
+                    </label>
+
+                    <label className="field">
+                      <span>Cor de fundo</span>
+                      <input
+                        disabled={isUpdatingOverlaySettings}
+                        onChange={(event) =>
+                          void handleOverlayAppearanceChange(
+                            'message',
+                            'backgroundColor',
+                            event.target.value
+                          )
+                        }
+                        type="color"
+                        value={getOverlayAppearanceValue('message', 'backgroundColor')}
+                      />
+                    </label>
+
+                    <label className="field field-full">
+                      <span>Imagem de fundo opcional</span>
+                      <input
+                        disabled={isUpdatingOverlaySettings}
+                        onBlur={() => void commitOverlayBackgroundImage('message')}
+                        onChange={(event) =>
+                          handleOverlayAppearanceDraftChange(
+                            'message',
+                            'backgroundImageUrl',
+                            event.target.value
+                          )
+                        }
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') {
+                            event.preventDefault()
+                            void commitOverlayBackgroundImage('message')
+                          }
+                        }}
+                        placeholder="Cole uma URL de imagem. Deixe vazio para usar só a cor."
+                        type="text"
+                        value={getOverlayAppearanceValue('message', 'backgroundImageUrl')}
+                      />
+                    </label>
+                  </div>
+
+                  <div className="overlay-style-actions">
+                    <input
+                      accept="image/*"
+                      className="visually-hidden-input"
+                      id="message-background-image-upload"
+                      onChange={(event) => void handleOverlayBackgroundFileSelected('message', event)}
+                      type="file"
                     />
-                  </label>
-
-                  <p className="network-access-note field-full">
-                    Quando uma enquete nova entrar no ar, a caixa tambem se ajusta primeiro ao
-                    conteudo antes de aceitar novos ajustes manuais.
-                  </p>
-
-                  <label className="field">
-                    <span>Fonte</span>
-                    <select
-                      disabled={isUpdatingOverlaySettings}
-                      onChange={(event) =>
-                        void handleOverlayAppearanceChange('poll', 'fontFamily', event.target.value)
-                      }
-                      value={getOverlayAppearanceValue('poll', 'fontFamily')}
+                    <label
+                      className="ghost-button file-upload-button"
+                      htmlFor="message-background-image-upload"
                     >
-                      {OVERLAY_FONT_OPTIONS.map((fontOption) => (
-                        <option key={fontOption} value={fontOption}>
-                          {fontOption}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <label className="field">
-                    <span>Cor do texto</span>
-                    <input
+                      Enviar imagem da mensagem
+                    </label>
+                    <button
+                      className="ghost-button"
                       disabled={isUpdatingOverlaySettings}
-                      onChange={(event) =>
-                        void handleOverlayAppearanceChange('poll', 'textColor', event.target.value)
-                      }
-                      type="color"
-                      value={getOverlayAppearanceValue('poll', 'textColor')}
-                    />
-                  </label>
+                      onClick={() => void clearOverlayBackgroundImage('message')}
+                      type="button"
+                    >
+                      Remover imagem da mensagem
+                    </button>
+                  </div>
+                </section>
+              ) : null}
 
-                  <label className="field">
-                    <span>Cor de destaque</span>
-                    <input
-                      disabled={isUpdatingOverlaySettings}
-                      onChange={(event) =>
-                        void handleOverlayAppearanceChange('poll', 'accentColor', event.target.value)
-                      }
-                      type="color"
-                      value={getOverlayAppearanceValue('poll', 'accentColor')}
-                    />
-                  </label>
+              {activeOverlaySection === 'poll' ? (
+                <section className="overlay-style-card overlay-style-card-wide">
+                  <div className="overlay-style-header">
+                    <div>
+                      <p className="card-kicker">Enquete</p>
+                      <h3>Card da enquete</h3>
+                    </div>
+                  </div>
 
-                  <label className="field">
-                    <span>Cor de fundo</span>
-                    <input
-                      disabled={isUpdatingOverlaySettings}
-                      onChange={(event) =>
-                        void handleOverlayAppearanceChange(
-                          'poll',
-                          'backgroundColor',
-                          event.target.value
-                        )
-                      }
-                      type="color"
-                      value={getOverlayAppearanceValue('poll', 'backgroundColor')}
-                    />
-                  </label>
+                  <div className="font-control-group">
+                    <div className="font-control-row">
+                      <span className="font-control-label">Fonte da enquete</span>
+                      <div className="font-control-actions">
+                        <button
+                          className="ghost-button"
+                          disabled={isUpdatingOverlaySettings}
+                          onClick={() => handleOverlayFontSizeChange('poll', -2)}
+                          type="button"
+                        >
+                          A-
+                        </button>
+                        <label className="font-control-input-shell">
+                          <input
+                            className="font-control-input"
+                            disabled={isUpdatingOverlaySettings}
+                            inputMode="numeric"
+                            onBlur={() => void commitOverlayFontSize('poll')}
+                            onChange={(event) =>
+                              handleFontOverrideInputChange('poll', event.target.value)
+                            }
+                            onKeyDown={(event) => {
+                              if (event.key === 'Enter') {
+                                event.preventDefault()
+                                void commitOverlayFontSize('poll')
+                              }
+                            }}
+                            type="text"
+                            value={getOverlayFontInputValue('poll')}
+                          />
+                          <span className="font-control-unit">px</span>
+                        </label>
+                        <button
+                          className="ghost-button"
+                          disabled={isUpdatingOverlaySettings}
+                          onClick={() => handleOverlayFontSizeChange('poll', 2)}
+                          type="button"
+                        >
+                          A+
+                        </button>
+                      </div>
+                    </div>
+                  </div>
 
-                  <label className="field field-full">
-                    <span>Imagem de fundo opcional</span>
-                    <input
-                      disabled={isUpdatingOverlaySettings}
-                      onBlur={() => void commitOverlayBackgroundImage('poll')}
-                      onChange={(event) =>
-                        handleOverlayAppearanceDraftChange(
-                          'poll',
-                          'backgroundImageUrl',
-                          event.target.value
-                        )
-                      }
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter') {
-                          event.preventDefault()
-                          void commitOverlayBackgroundImage('poll')
+                  <div className="overlay-style-fields">
+                    <label className="field">
+                      <span>Largura da caixa</span>
+                      <input
+                        disabled={isUpdatingOverlaySettings}
+                        onBlur={() => void commitOverlayBoxDimension('poll', 'boxWidth')}
+                        onChange={(event) =>
+                          void handleOverlayBoxDimensionInputChange(
+                            'poll',
+                            'boxWidth',
+                            event.target.value
+                          )
                         }
-                      }}
-                      placeholder="Cole uma URL de imagem. Deixe vazio para usar so a cor."
-                      type="text"
-                      value={getOverlayAppearanceValue('poll', 'backgroundImageUrl')}
-                    />
-                  </label>
-                </div>
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') {
+                            event.preventDefault()
+                            void commitOverlayBoxDimension('poll', 'boxWidth')
+                          }
+                        }}
+                        max="1800"
+                        min="180"
+                        step="10"
+                        type="number"
+                        value={getOverlayAppearanceValue('poll', 'boxWidth')}
+                      />
+                    </label>
 
-                <div className="overlay-style-actions">
-                  <input
-                    accept="image/*"
-                    className="visually-hidden-input"
-                    id="poll-background-image-upload"
-                    onChange={(event) => void handleOverlayBackgroundFileSelected('poll', event)}
-                    type="file"
-                  />
-                  <label className="ghost-button file-upload-button" htmlFor="poll-background-image-upload">
-                    Enviar imagem da enquete
-                  </label>
-                  <button
-                    className="ghost-button"
-                    disabled={isUpdatingOverlaySettings}
-                    onClick={() => void clearOverlayBackgroundImage('poll')}
-                    type="button"
-                  >
-                    Remover imagem da enquete
-                  </button>
-                </div>
-              </section>
+                    <label className="field">
+                      <span>Altura da caixa</span>
+                      <input
+                        disabled={isUpdatingOverlaySettings}
+                        onBlur={() => void commitOverlayBoxDimension('poll', 'boxHeight')}
+                        onChange={(event) =>
+                          void handleOverlayBoxDimensionInputChange(
+                            'poll',
+                            'boxHeight',
+                            event.target.value
+                          )
+                        }
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') {
+                            event.preventDefault()
+                            void commitOverlayBoxDimension('poll', 'boxHeight')
+                          }
+                        }}
+                        max="1800"
+                        min="180"
+                        step="10"
+                        type="number"
+                        value={getOverlayAppearanceValue('poll', 'boxHeight')}
+                      />
+                    </label>
+
+                    <p className="network-access-note field-full">
+                      Quando uma enquete nova entrar no ar, a caixa também se ajusta primeiro ao
+                      conteúdo antes de aceitar novos ajustes manuais.
+                    </p>
+
+                    <label className="field">
+                      <span>Fonte</span>
+                      <select
+                        disabled={isUpdatingOverlaySettings}
+                        onChange={(event) =>
+                          void handleOverlayAppearanceChange('poll', 'fontFamily', event.target.value)
+                        }
+                        value={getOverlayAppearanceValue('poll', 'fontFamily')}
+                      >
+                        {OVERLAY_FONT_OPTIONS.map((fontOption) => (
+                          <option key={fontOption} value={fontOption}>
+                            {fontOption}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="field">
+                      <span>Cor do texto</span>
+                      <input
+                        disabled={isUpdatingOverlaySettings}
+                        onChange={(event) =>
+                          void handleOverlayAppearanceChange('poll', 'textColor', event.target.value)
+                        }
+                        type="color"
+                        value={getOverlayAppearanceValue('poll', 'textColor')}
+                      />
+                    </label>
+
+                    <label className="field">
+                      <span>Cor de destaque</span>
+                      <input
+                        disabled={isUpdatingOverlaySettings}
+                        onChange={(event) =>
+                          void handleOverlayAppearanceChange('poll', 'accentColor', event.target.value)
+                        }
+                        type="color"
+                        value={getOverlayAppearanceValue('poll', 'accentColor')}
+                      />
+                    </label>
+
+                    <label className="field">
+                      <span>Cor de fundo</span>
+                      <input
+                        disabled={isUpdatingOverlaySettings}
+                        onChange={(event) =>
+                          void handleOverlayAppearanceChange(
+                            'poll',
+                            'backgroundColor',
+                            event.target.value
+                          )
+                        }
+                        type="color"
+                        value={getOverlayAppearanceValue('poll', 'backgroundColor')}
+                      />
+                    </label>
+
+                    <label className="field field-full">
+                      <span>Imagem de fundo opcional</span>
+                      <input
+                        disabled={isUpdatingOverlaySettings}
+                        onBlur={() => void commitOverlayBackgroundImage('poll')}
+                        onChange={(event) =>
+                          handleOverlayAppearanceDraftChange(
+                            'poll',
+                            'backgroundImageUrl',
+                            event.target.value
+                          )
+                        }
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') {
+                            event.preventDefault()
+                            void commitOverlayBackgroundImage('poll')
+                          }
+                        }}
+                        placeholder="Cole uma URL de imagem. Deixe vazio para usar só a cor."
+                        type="text"
+                        value={getOverlayAppearanceValue('poll', 'backgroundImageUrl')}
+                      />
+                    </label>
+                  </div>
+
+                  <div className="overlay-style-actions">
+                    <input
+                      accept="image/*"
+                      className="visually-hidden-input"
+                      id="poll-background-image-upload"
+                      onChange={(event) => void handleOverlayBackgroundFileSelected('poll', event)}
+                      type="file"
+                    />
+                    <label
+                      className="ghost-button file-upload-button"
+                      htmlFor="poll-background-image-upload"
+                    >
+                      Enviar imagem da enquete
+                    </label>
+                    <button
+                      className="ghost-button"
+                      disabled={isUpdatingOverlaySettings}
+                      onClick={() => void clearOverlayBackgroundImage('poll')}
+                      type="button"
+                    >
+                      Remover imagem da enquete
+                    </button>
+                  </div>
+                </section>
+              ) : null}
             </div>
           </article>
 
           <article className="operator-panel">
             <div className="operator-panel-header">
               <div>
-                <p className="card-kicker">Saida</p>
+                <p className="card-kicker">Saída</p>
                 <h2>Uso no vMix</h2>
                 <p className="panel-subtitle">
                   Use estas URLs no Browser Input e mantenha o ajuste visual centralizado aqui. Na
-                  primeira execucao, permita a conexao quando o Windows solicitar acesso a rede.
+                  primeira execução, permita a conexão quando o Windows solicitar acesso à rede.
                 </p>
               </div>
             </div>
 
-            <dl className="definition-list compact">
-              <div>
-                <dt>Overlay (mensagens - local)</dt>
-                <dd className="url-row">
-                  <span>{localOverlayMessageUrl || 'Carregando...'}</span>
-                  <button
-                    className="ghost-button ghost-button-compact"
-                    disabled={!localOverlayMessageUrl}
-                    onClick={() => void copyToClipboard(localOverlayMessageUrl)}
-                    type="button"
-                  >
-                    Copiar
-                  </button>
-                </dd>
-              </div>
-              <div>
-                <dt>Overlay (mensagens - rede)</dt>
-                <dd className="url-row">
-                  <span>{networkOverlayMessageUrl || 'Indisponivel'}</span>
-                  <button
-                    className="ghost-button ghost-button-compact"
-                    disabled={!networkOverlayMessageUrl}
-                    onClick={() => void copyToClipboard(networkOverlayMessageUrl)}
-                    type="button"
-                  >
-                    Copiar
-                  </button>
-                </dd>
-              </div>
-              <div>
-                <dt>Overlay (enquete - local)</dt>
-                <dd className="url-row">
-                  <span>{localOverlayPollUrl || 'Carregando...'}</span>
-                  <button
-                    className="ghost-button ghost-button-compact"
-                    disabled={!localOverlayPollUrl}
-                    onClick={() => void copyToClipboard(localOverlayPollUrl)}
-                    type="button"
-                  >
-                    Copiar
-                  </button>
-                </dd>
-              </div>
-              <div>
-                <dt>Overlay (enquete - rede)</dt>
-                <dd className="url-row">
-                  <span>{networkOverlayPollUrl || 'Indisponivel'}</span>
-                  <button
-                    className="ghost-button ghost-button-compact"
-                    disabled={!networkOverlayPollUrl}
-                    onClick={() => void copyToClipboard(networkOverlayPollUrl)}
-                    type="button"
-                  >
-                    Copiar
-                  </button>
-                </dd>
-              </div>
-              <div>
-                <dt>Status do backend</dt>
-                <dd>{backendHealth.ok ? 'Online' : backendHealth.error}</dd>
-              </div>
-            </dl>
-
-            <div className="network-access-panel">
-              <p className="network-access-note">
-                {isNetworkAccessEnabled
-                  ? 'O acesso pela rede local esta liberado. Se nao quiser mais expor o overlay para outros dispositivos, retire o acesso.'
-                  : 'Para compartilhar o overlay na rede local, permita a conexao no firewall do Windows.'}
-              </p>
-              {recommendedNetworkAddress ? (
-                <div className="network-candidates-panel">
-                  <p className="network-access-note">
-                    IP recomendado para outros dispositivos: <strong>{recommendedNetworkAddress}</strong>
-                  </p>
-                </div>
-              ) : null}
-              <div className="network-access-actions">
+            <div className="status-block-tabs-shell">
+              <div className="status-block-tabs">
                 <button
-                  className="ghost-button"
-                  disabled={isEnablingNetworkAccess || !backendStatus?.transport?.port}
-                  onClick={() =>
-                    void (isNetworkAccessEnabled
-                      ? handleDisableNetworkAccess()
-                      : handleEnableNetworkAccess())
-                  }
+                  className={`status-block-tab ${activeVmixUrlTab === 'local' ? 'is-active' : ''}`}
+                  onClick={() => setActiveVmixUrlTab('local')}
                   type="button"
                 >
-                  {isEnablingNetworkAccess
-                    ? 'Atualizando acesso...'
-                    : isNetworkAccessEnabled
-                      ? 'Retirar acesso da rede'
-                      : 'Permitir acesso na rede'}
+                  Local
                 </button>
-                {networkAccessSuccess ? (
-                  <p className="vote-match">{networkAccessSuccess}</p>
-                ) : null}
-                {networkAccessError ? <p className="inline-error">{networkAccessError}</p> : null}
+                <button
+                  className={`status-block-tab ${activeVmixUrlTab === 'network' ? 'is-active' : ''}`}
+                  onClick={() => setActiveVmixUrlTab('network')}
+                  type="button"
+                >
+                  Rede
+                </button>
               </div>
-              {otherNetworkCandidates.length ? (
-                <details className="network-candidates-panel">
-                  <summary>Detalhes tecnicos de rede</summary>
-                  <p className="network-access-note">
-                    Outros IPs detectados nesta maquina:{' '}
-                    {otherNetworkCandidates.map((candidate) => candidate.address).join(', ')}
-                  </p>
-                </details>
-              ) : null}
             </div>
+
+            {renderTransmissionUrlBlock(activeVmixUrlTab === 'local' ? 'local' : 'network')}
           </article>
         </section>
       ) : null}
 
       {activeTab === 'system' ? (
         <section className="operator-tab-panel-stack">
-            <section className="operator-hero">
-              <div className="operator-hero-copy">
-                <p className="eyebrow">Sistema e manutencao</p>
-                <h1>Gerencie conexao, rede local e suporte operacional do app</h1>
-                <p className="hero-text">
-                  Aqui ficam os recursos tecnicos de apoio: sessao do WhatsApp, runtime local, rede e informacoes do ambiente.
-                </p>
-              </div>
-
-              <div className="operator-hero-actions">
-                <span className={`status-pill status-pill-${whatsappStatusClass}`}>
-                WhatsApp {getWhatsAppConnectionLabel(whatsAppStatus?.connection)}
-              </span>
-                <button
-                  className="primary-button"
-                  disabled={
-                    isConnecting ||
-                    isDisconnectingWhatsApp ||
-                    isRecoveringRuntime ||
-                    whatsAppStatus?.connection === 'starting' ||
-                    whatsAppStatus?.connection === 'recovering' ||
-                    whatsAppStatus?.connection === 'ready'
-                  }
-                onClick={handleConnectWhatsApp}
-                type="button"
-              >
-                {isConnecting ? 'Conectando...' : 'Conectar WhatsApp'}
-              </button>
-                <button
-                  className="ghost-button"
-                  disabled={
-                    !canRecoverWhatsAppSession ||
-                    isRecoveringRuntime ||
-                    isConnecting ||
-                    isDisconnectingWhatsApp
-                  }
-                  onClick={handleResetWhatsAppRuntime}
-                  type="button"
-                >
-                  {isRecoveringRuntime ? 'Recuperando...' : 'Recuperar sessao'}
-                </button>
-                <button
-                  className="ghost-button ghost-button-danger"
-                  disabled={
-                    !canLogoutWhatsApp ||
-                    isDisconnectingWhatsApp ||
-                    isConnecting ||
-                    isRecoveringRuntime
-                  }
-                  onClick={handleLogoutWhatsApp}
-                  type="button"
-                >
-                  {isDisconnectingWhatsApp ? 'Desconectando...' : 'Desconectar WhatsApp'}
-                </button>
-              </div>
-            </section>
-
           <section className="operator-summary">
             <article className="summary-card">
               <span className="summary-label">Mensagens aguardando</span>
               <strong className="summary-value">{summaryPendingCount}</strong>
-              <span className="summary-note">Itens que ainda precisam de decisao.</span>
+              <span className="summary-note">Itens que ainda precisam de decisão.</span>
             </article>
             <article className="summary-card">
               <span className="summary-label">Preview atual</span>
               <strong className="summary-value">{previewItem ? previewItem.author : 'Nenhum item'}</strong>
               <span className="summary-note">
                 {previewItem
-                  ? `${getItemTypeLabel(previewItem.type)} pronto para revisao`
-                  : 'Escolha um item para revisar na operacao.'}
+                  ? `${getItemTypeLabel(previewItem.type)} pronto para revisão`
+                  : 'Escolha um item para revisar na operação.'}
               </span>
             </article>
             <article className="summary-card">
@@ -2487,7 +2637,7 @@ function App() {
               <span className="summary-note">
                 {liveItem
                   ? `${getItemTypeLabel(liveItem.type)} exibido agora`
-                  : 'Nenhum item enviado para a transmissao.'}
+                  : 'Nenhum item enviado para a transmissão.'}
               </span>
             </article>
             <article className="summary-card">
@@ -2495,8 +2645,8 @@ function App() {
               <strong className="summary-value">{activePoll ? activePoll.title : 'Sem enquete'}</strong>
               <span className="summary-note">
                 {activePoll
-                  ? `${activePoll.totalVoters} voto(s) unicos registrados`
-                  : 'Crie uma enquete quando precisar abrir votacao.'}
+                  ? `${activePoll.totalVoters} voto(s) únicos registrados`
+                  : 'Crie uma enquete quando precisar abrir votação.'}
               </span>
             </article>
           </section>
@@ -2505,23 +2655,32 @@ function App() {
             <div className="operator-panel-header">
               <div>
                 <p className="card-kicker">Sistema</p>
-                <h2>Manutencao e apoio</h2>
+                <h2>Manutenção e apoio</h2>
                 <p className="panel-subtitle">
-                  Recursos tecnicos e operacionais menos frequentes, separados da rotina principal.
+                  Recursos técnicos e operacionais menos frequentes, separados da rotina principal.
                 </p>
               </div>
             </div>
 
             <div className="operator-details-grid operator-details-grid-open">
-              <section className="status-block">
-                <h3>WhatsApp</h3>
+              <section className="status-block status-block-whatsapp">
+                <div className="status-block-header">
+                  <h3>WhatsApp</h3>
+                  <span className={`status-pill status-pill-${whatsappStatusClass}`}>
+                    {getWhatsAppConnectionLabel(whatsAppStatus?.connection)}
+                  </span>
+                </div>
                 <dl className="definition-list compact">
                   <div>
                     <dt>Conta</dt>
-                    <dd>{whatsAppStatus?.account?.pushname || 'Nao autenticada'}</dd>
+                    <dd>{whatsAppStatus?.account?.pushname || 'Não autenticada'}</dd>
                   </div>
                   <div>
-                    <dt>Ultimo evento</dt>
+                    <dt>Status</dt>
+                    <dd>{getWhatsAppConnectionLabel(whatsAppStatus?.connection)}</dd>
+                  </div>
+                  <div>
+                    <dt>Último evento</dt>
                     <dd>
                       {whatsAppStatus?.lastEventAt
                         ? formatTimestamp(whatsAppStatus.lastEventAt)
@@ -2530,9 +2689,47 @@ function App() {
                   </div>
                   <div>
                     <dt>QR code</dt>
-                    <dd>{whatsAppStatus?.qrCodeDataUrl ? 'Disponivel' : 'Nao exibido'}</dd>
+                    <dd>{whatsAppStatus?.qrCodeDataUrl ? 'Disponível' : 'Não exibido'}</dd>
                   </div>
                 </dl>
+                <div className="status-block-actions">
+                  {canLogoutWhatsApp ? (
+                    <button
+                      className="ghost-button ghost-button-danger"
+                      disabled={isDisconnectingWhatsApp || isConnecting || isRecoveringRuntime}
+                      onClick={handleLogoutWhatsApp}
+                      type="button"
+                    >
+                      {isDisconnectingWhatsApp ? 'Desconectando...' : 'Desconectar'}
+                    </button>
+                  ) : null}
+                  {!canLogoutWhatsApp ? (
+                    <button
+                      className="primary-button"
+                      disabled={
+                        isConnecting ||
+                        isDisconnectingWhatsApp ||
+                        isRecoveringRuntime ||
+                        whatsAppStatus?.connection === 'starting' ||
+                        whatsAppStatus?.connection === 'recovering'
+                      }
+                      onClick={handleConnectWhatsApp}
+                      type="button"
+                    >
+                      {isConnecting ? 'Conectando...' : 'Conectar'}
+                    </button>
+                  ) : null}
+                  {!canLogoutWhatsApp && canRecoverWhatsAppSession ? (
+                    <button
+                      className="ghost-button"
+                      disabled={isRecoveringRuntime || isConnecting || isDisconnectingWhatsApp}
+                      onClick={handleResetWhatsAppRuntime}
+                      type="button"
+                    >
+                      {isRecoveringRuntime ? 'Recuperando...' : 'Recuperar'}
+                    </button>
+                  ) : null}
+                </div>
                 {whatsAppStatus?.qrCodeDataUrl ? (
                   <img
                     alt="QR code do WhatsApp"
@@ -2543,153 +2740,79 @@ function App() {
               </section>
 
               <section className="status-block">
-                <h3>Transmissao</h3>
-                <dl className="definition-list compact">
-                  <div>
-                    <dt>Overlay (mensagens - local)</dt>
-                    <dd className="url-row">
-                      <span>{localOverlayMessageUrl || 'Carregando...'}</span>
-                      <button
-                        className="ghost-button ghost-button-compact"
-                        disabled={!localOverlayMessageUrl}
-                        onClick={() => void copyToClipboard(localOverlayMessageUrl)}
-                        type="button"
-                      >
-                        Copiar
-                      </button>
-                    </dd>
+                <div className="status-block-header">
+                  <h3>Transmissão</h3>
+                </div>
+                <div className="status-block-tabs-shell">
+                  <div className="status-block-tabs">
+                    <button
+                      className={`status-block-tab ${
+                        activeSystemTransmissionTab === 'local' ? 'is-active' : ''
+                      }`}
+                      onClick={() => setActiveSystemTransmissionTab('local')}
+                      type="button"
+                    >
+                      Local
+                    </button>
+                    <button
+                      className={`status-block-tab ${
+                        activeSystemTransmissionTab === 'network' ? 'is-active' : ''
+                      }`}
+                      onClick={() => setActiveSystemTransmissionTab('network')}
+                      type="button"
+                    >
+                      Rede
+                    </button>
                   </div>
-                  <div>
-                    <dt>Overlay (mensagens - rede)</dt>
-                    <dd className="url-row">
-                      <span>{networkOverlayMessageUrl || 'Indisponivel'}</span>
-                      <button
-                        className="ghost-button ghost-button-compact"
-                        disabled={!networkOverlayMessageUrl}
-                        onClick={() => void copyToClipboard(networkOverlayMessageUrl)}
-                        type="button"
-                      >
-                        Copiar
-                      </button>
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Overlay (enquete - local)</dt>
-                    <dd className="url-row">
-                      <span>{localOverlayPollUrl || 'Carregando...'}</span>
-                      <button
-                        className="ghost-button ghost-button-compact"
-                        disabled={!localOverlayPollUrl}
-                        onClick={() => void copyToClipboard(localOverlayPollUrl)}
-                        type="button"
-                      >
-                        Copiar
-                      </button>
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Overlay (enquete - rede)</dt>
-                    <dd className="url-row">
-                      <span>{networkOverlayPollUrl || 'Indisponivel'}</span>
-                      <button
-                        className="ghost-button ghost-button-compact"
-                        disabled={!networkOverlayPollUrl}
-                        onClick={() => void copyToClipboard(networkOverlayPollUrl)}
-                        type="button"
-                      >
-                        Copiar
-                      </button>
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Ultima checagem</dt>
-                    <dd>{formatLastCheck(backendHealth.lastCheckedAt)}</dd>
-                  </div>
-                  <div>
-                    <dt>Sistema</dt>
-                    <dd>{backendHealth.ok ? 'Online' : backendHealth.error}</dd>
-                  </div>
-                </dl>
+                </div>
+                {renderTransmissionUrlBlock(
+                  activeSystemTransmissionTab === 'local' ? 'local' : 'network'
+                )}
               </section>
 
               <section className="status-block">
-                <h3>Recuperacao e limpeza</h3>
+                <div className="status-block-header">
+                  <h3>Recuperação e limpeza</h3>
+                </div>
                 {cleanupError ? <p className="inline-error">{cleanupError}</p> : null}
                 {cleanupSuccess ? <p className="vote-match">{cleanupSuccess}</p> : null}
                 <dl className="definition-list compact">
                   <div>
                     <dt>Estado restaurado</dt>
-                    <dd>{backendStatus?.runtime?.restoredFromDisk ? 'Sim' : 'Nao'}</dd>
+                    <dd>{backendStatus?.runtime?.restoredFromDisk ? 'Sim' : 'Não'}</dd>
                   </div>
                   <div>
-                    <dt>Ultima persistencia</dt>
+                    <dt>Última persistência</dt>
                     <dd>
                       {backendStatus?.runtime?.persistedAt
                         ? formatTimestamp(backendStatus.runtime.persistedAt)
-                        : 'Sem persistencia anterior'}
+                        : 'Sem persistência anterior'}
                     </dd>
                   </div>
                 </dl>
-                <div className="form-actions">
+                <div className="status-block-actions">
                   <button
                     className="ghost-button ghost-button-danger"
                     disabled={isCleaningRuntime}
                     onClick={handleCleanupRuntime}
                     type="button"
                   >
-                    {isCleaningRuntime ? 'Limpando...' : 'Limpar fila e midias locais'}
+                    {isCleaningRuntime ? 'Limpando...' : 'Limpar dados locais'}
                   </button>
                 </div>
               </section>
 
               <section className="status-block">
-                <h3>Entrada manual de teste</h3>
-                <form className="message-form compact-form" onSubmit={handleSubmit}>
-                  <label className="field">
-                    <span>Autor</span>
-                    <input
-                      onChange={(event) => setFormState({ ...formState, author: event.target.value })}
-                      placeholder="Ex.: Maria Souza"
-                      type="text"
-                      value={formState.author}
-                    />
-                  </label>
-                  <label className="field">
-                    <span>Telefone</span>
-                    <input
-                      onChange={(event) => setFormState({ ...formState, phone: event.target.value })}
-                      placeholder="Ex.: 11999990000"
-                      type="text"
-                      value={formState.phone}
-                    />
-                  </label>
-                  <label className="field field-full">
-                    <span>Mensagem</span>
-                    <textarea
-                      onChange={(event) => setFormState({ ...formState, content: event.target.value })}
-                      placeholder="Use esta area somente para validar o fluxo local."
-                      rows={4}
-                      value={formState.content}
-                    />
-                  </label>
-                  {submissionError ? <p className="inline-error">{submissionError}</p> : null}
-                  <div className="form-actions">
-                    <button className="primary-button" disabled={isSubmitting} type="submit">
-                      {isSubmitting ? 'Adicionando...' : 'Adicionar a fila'}
-                    </button>
-                  </div>
-                </form>
-              </section>
-
-              <section className="status-block">
-                <h3>Aplicativo</h3>
+                <div className="status-block-header">
+                  <h3>Aplicativo</h3>
+                </div>
                 <dl className="definition-list compact">
                   <div>
                     <dt>App</dt>
-                    <dd>{shellInfo?.appName || 'Carregando...'}</dd>
+                      <dd>{shellInfo?.appName || 'Carregando...'}</dd>
                   </div>
                   <div>
-                    <dt>Versao</dt>
+                    <dt>Versão</dt>
                     <dd>{shellInfo?.appVersion || 'Carregando...'}</dd>
                   </div>
                   <div>
